@@ -60,7 +60,7 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
 3. Repository klonen:
 
    ```bash
-   git clone https://github.com/Changlai-Bao/Projektarbeit
+   git clone https://github.com/MSY-Walter/Projektarbeit
    ```
 
 ## 🚀 Verwendung
@@ -75,11 +75,14 @@ Das System bietet folgende Standard-Messroutinen:
 
 ```
 .
-├── src/
-│   ├── Dashboard.ipynb          # Haupt-Dashboard für Messungen
-│   ├── Messdaten_Visualisierung.ipynb # Messdaten in Jupyter-Notebook ploten
-│   └── Messdaten_Generator.py  # Modul zur Datengenerierung
-└── README.md                # Diese Datei
+├── docs/                              # Dokumentation
+├── src/                               # Quellcode-Verzeichnis
+│   ├── Dashboard.ipynb                # Haupt-Dashboard für Messungen
+│   ├── Messdaten_Generator.py         # Modul zur Datengenerierung 
+│   └── Messdaten_Visualisierung.ipynb # Messdaten in Jupyter-Notebook ploten                           
+├── LICENSE                            # Zertifikat                            
+├── README.md                          # Diese Datei
+└── requirements.txt                   # Python-Pakete
 ```
 
 ## 🤝 Beitrag leisten
