@@ -54,7 +54,7 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
    ```bash
    sudo apt update
    sudo apt install python3 python3-pip
-   pip install numpy matplotlib digilent-daqmx pandas scipy
+   pip install -r requirements.txt
    ```
 
 3. Repository klonen:
