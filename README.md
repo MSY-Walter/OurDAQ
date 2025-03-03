@@ -19,9 +19,9 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
 - Folgende Python-Pakete:
   - numpy
   - matplotlib
-  - digilent-daqmx
-  - pandas (für Datenanalyse)
-  - scipy (für Signalverarbeitung)
+  - ipykernel
+  - ipython
+  - ipywidgets
 
 ### Entwicklungsumgebung
 

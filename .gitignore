@@ -1,3 +1,7 @@
 # Virtualenv
 .venv/
 
+# Database
+__pycache__/ 
+*.pyc
+
