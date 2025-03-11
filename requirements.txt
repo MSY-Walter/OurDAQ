@@ -3,3 +3,4 @@ matplotlib
 ipykernel
 ipython
 ipywidgets
+notebook

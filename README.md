@@ -22,6 +22,7 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
   - ipykernel
   - ipython
   - ipywidgets
+  - notebook
 
 ### Entwicklungsumgebung
 
