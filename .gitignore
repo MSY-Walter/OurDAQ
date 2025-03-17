@@ -1,5 +1,6 @@
 # Virtualenv
 .venv/
+.venv_linux/
 
 # Database
 __pycache__/ 

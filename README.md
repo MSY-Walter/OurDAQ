@@ -24,12 +24,33 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
   - ipywidgets
   - notebook
 
+## ⚙️ Installation
+
+1. Raspberry Pi OS installieren
+2. Python und notwendige Pakete installieren:
+
+   ```bash
+   #Linux
+   sudo apt update
+   sudo apt install python3 python3-pip
+   ```
+
+3. Repository klonen:
+
+   ```bash
+   git clone https://github.com/MSY-Walter/Projektarbeit.git
+   ```
+
 ### Entwicklungsumgebung
 
 1. Virtuelle Umgebung erstellen:
 
    ```bash
+   # Windows
    python -m venv .venv
+
+   #Linux
+   python -m venv .venv_linux
    ```
 
 2. Umgebung aktivieren:
@@ -37,31 +58,15 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
    ```bash
    # Windows
    .venv\Scripts\activate
-   # Linux/MacOS
-   source .venv/bin/activate
+
+   #Linux
+   source .venv_linux/bin/activate
    ```
 
 3. Abhängigkeiten installieren:
 
    ```bash
    pip install -r requirements.txt
-   ```
-
-## ⚙️ Installation
-
-1. Raspberry Pi OS installieren
-2. Python und notwendige Pakete installieren:
-
-   ```bash
-   sudo apt update
-   sudo apt install python3 python3-pip
-   pip install -r requirements.txt
-   ```
-
-3. Repository klonen:
-
-   ```bash
-   git clone https://github.com/MSY-Walter/Projektarbeit
    ```
 
 ## 🚀 Verwendung
@@ -80,8 +85,9 @@ Das System bietet folgende Standard-Messroutinen:
 ├── src/                               # Quellcode-Verzeichnis
 │   ├── Dashboard.ipynb                # Haupt-Dashboard für Messungen
 │   ├── Messdaten_Generator.py         # Modul zur Datengenerierung 
-│   └── Messdaten_Visualisierung.ipynb # Messdaten in Jupyter-Notebook ploten                           
-├── LICENSE                            # Zertifikat                            
+│   └── Messdaten_Visualisierung.ipynb # Messdaten in Jupyter-Notebook ploten
+├── .gitignore                         # Git ignorieren
+├── LICENSE                            # Zertifikat                        
 ├── README.md                          # Diese Datei
 └── requirements.txt                   # Python-Pakete
 ```
