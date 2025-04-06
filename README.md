@@ -24,6 +24,8 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
   - `ipython`
   - `ipywidgets`
   - `notebook`
+  - `pandas`
+  - `scipy`
 
 ## ⚙️ Installation
 
@@ -32,7 +34,7 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
 
    ```bash
    sudo apt update
-   sudo apt install python3 python3-pip
+   sudo apt upgrade
    ```
 
 4. Repository klonen:
@@ -74,8 +76,10 @@ Das System bietet folgende Standard-Messroutinen:
 - `docs/`: Dokumentation
 - `src/`: Quellcode-Verzeichnis
   - `Dashboard.ipynb`: Haupt-Dashboard für Messungen
+  - `Funktionsgenerator.ipynb`: Modul zur Funktiongenerierung
   - `Messdaten_Generator.py`: Modul zur Datengenerierung
   - `Messdaten_Visualisierung.ipynb`: Messdaten in Jupyter-Notebook ploten
+  - `Signalmonitor.ipynb`: Signal visualisieren und Speichern-Funktion
 - `.gitignore`: Dateiname ignorieren
 - `LICENSE`: MIT License
 - `README.md`: Diese Datei

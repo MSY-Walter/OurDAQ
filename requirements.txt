@@ -4,3 +4,5 @@ ipykernel
 ipython
 ipywidgets
 notebook
+pandas
+scipy
