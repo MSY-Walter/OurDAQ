@@ -17,6 +17,7 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
 - `Linux`
 - `Python 3.8+`
 - `Jupyter Notebook`
+- `tkinter`
 - Folgende Python-Pakete:
   - `numpy`
   - `matplotlib`
@@ -72,15 +73,10 @@ Das System bietet folgende Standard-Messroutinen:
 
 - `docs/`: Dokumentation
 - `src/`: Quellcode-Verzeichnis
-  - `Dashboard.ipynb`: Haupt-Dashboard für Messungen
-  - `Funktionsgenerator.ipynb`: Modul zur Funktiongenerierung
-  - `Messdaten_Generator.py`: Modul zur Datengenerierung
-  - `Messdaten_Visualisierung.ipynb`: Messdaten in Jupyter-Notebook ploten
   - `Multimeter.py`: Dashbord für Multimeter
   - `Oszilloskop_Basis.py`: Basis-Dashboard für Oszilloskop
   - `Oszilloskop_Erweiterung.py`: Erweiteres Dashboard für Oszilloskop
-  - `Signalmonitor.ipynb`: Signal visualisieren und Speichern-Funktion
-- `.gitignore`: Dateiname ignorieren
+- `.gitignore`: Bei commit ignorieren
 - `LICENSE`: MIT License
 - `README.md`: Diese Datei
 - `requirements.txt`: Python-Pakete
