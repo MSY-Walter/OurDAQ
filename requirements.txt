@@ -1,9 +1,4 @@
 numpy
 matplotlib
-ipykernel
-ipython
-ipywidgets
-notebook
 pandas
-scipy
-openpyxl
+datetime

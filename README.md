@@ -20,13 +20,8 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
 - Folgende Python-Pakete:
   - `numpy`
   - `matplotlib`
-  - `ipykernel`
-  - `ipython`
-  - `ipywidgets`
-  - `notebook`
   - `pandas`
-  - `scipy`
-  - `openpyxl`
+  - `datetime`
 
 ## ⚙️ Installation
 
