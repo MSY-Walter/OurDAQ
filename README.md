@@ -26,11 +26,12 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
   - `notebook`
   - `pandas`
   - `scipy`
+  - `openpyxl`
 
 ## ⚙️ Installation
 
 1. Raspberry Pi OS installieren
-2. Python und notwendige Pakete installieren:
+2. Python update und upgrade:
 
    ```bash
    sudo apt update
@@ -57,10 +58,11 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
    source .venv/bin/activate
    ```
 
-3. Abhängigkeiten installieren:
+3. Abhängigkeiten und Pakete installieren:
 
    ```bash
    pip install -r requirements.txt
+   sudo apt install -y python3-tk
    ```
 
 ## 🚀 Verwendung
@@ -79,6 +81,9 @@ Das System bietet folgende Standard-Messroutinen:
   - `Funktionsgenerator.ipynb`: Modul zur Funktiongenerierung
   - `Messdaten_Generator.py`: Modul zur Datengenerierung
   - `Messdaten_Visualisierung.ipynb`: Messdaten in Jupyter-Notebook ploten
+  - `Multimeter.py`: Dashbord für Multimeter
+  - `Oszilloskop_Basis.py`: Basis-Dashboard für Oszilloskop
+  - `Oszilloskop_Erweiterung.py`: Erweiteres Dashboard für Oszilloskop
   - `Signalmonitor.ipynb`: Signal visualisieren und Speichern-Funktion
 - `.gitignore`: Dateiname ignorieren
 - `LICENSE`: MIT License

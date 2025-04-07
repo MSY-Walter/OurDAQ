@@ -6,3 +6,4 @@ ipywidgets
 notebook
 pandas
 scipy
+openpyxl
