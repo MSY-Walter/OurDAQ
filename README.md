@@ -77,10 +77,10 @@ Das System bietet folgende Standard-Messroutinen:
 - `src/`: Quellcode-Verzeichnis
   - `DMM_V1.py`: Dashbord für Multimeter mit tkinter
   - `DMM_V2.py`: Dashbord für Multimeter mit PyQt5
+  - `Funktionsgenerator.py`: Dashboard zu Erzeugung der Signale mit PyQt5
   - `Oszilloskop_V1_Basis.py`: Basis-Dashboard für Oszilloskop mit tkinter
   - `Oszilloskop_V1_Erweiterung.py`: Erweiteres Dashboard für Oszilloskop mit tkinter
   - `Oszilloskop_V2.py`: Dashboard für Oszilloskop mit PyQt5
-  - `Signal_Generator.py`: Datei zu Erzeugung der simulierte Signale
   - `Spannung_Strom_Generator.py`: Datei zu Erzeugung der simulierte Spannung und Strom
 - `.gitignore`: Bei commit ignorieren
 - `LICENSE`: MIT License
