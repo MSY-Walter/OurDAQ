@@ -15,7 +15,7 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSlot
 from PyQt5.QtGui import QPalette, QColor, QFont, QPainter, QPen, QBrush
 
 # Importiere den Datensimulator
-from Simulationsdaten import DatenSimulator
+from Spannung_Strom_Generator import DatenSimulator
 
 class MesswertAnzeige(QWidget):
     """Widget zur Anzeige des aktuellen Messwerts mit LabVIEW-ähnlicher Darstellung"""
@@ -111,11 +111,11 @@ class BananaJackVisualisierung(QWidget):
         qp.drawLine(50, 50, self.width() - 50, 50)
         
         # Anschlüsse
-        # Volt/Ohm links (rot)
+        # Volt links (rot)
         qp.setBrush(QBrush(QColor(255, 0, 0)))
         qp.drawEllipse(40, 40, 20, 20)
         qp.setFont(QFont("Arial", 8, QFont.Bold))
-        qp.drawText(30, 80, 40, 20, Qt.AlignCenter, "V/Ω")
+        qp.drawText(30, 80, 40, 20, Qt.AlignCenter, "V")
         
         # COM in der Mitte (schwarz/grau)
         qp.setBrush(QBrush(QColor(50, 50, 50)))
@@ -126,18 +126,6 @@ class BananaJackVisualisierung(QWidget):
         qp.setBrush(QBrush(QColor(255, 0, 0)))
         qp.drawEllipse(self.width() - 60, 40, 20, 20)
         qp.drawText(self.width() - 70, 80, 40, 20, Qt.AlignCenter, "A")
-        
-        # Pfeile
-        qp.setPen(QPen(Qt.black, 1))
-        # Pfeil links
-        qp.drawLine(50, 20, 50, 35)
-        qp.drawLine(45, 30, 50, 35)
-        qp.drawLine(55, 30, 50, 35)
-        
-        # Pfeil rechts
-        qp.drawLine(self.width() - 50, 20, self.width() - 50, 35)
-        qp.drawLine(self.width() - 55, 30, self.width() - 50, 35)
-        qp.drawLine(self.width() - 45, 30, self.width() - 50, 35)
 
 
 class DigitalMultimeter(QMainWindow):
@@ -147,7 +135,7 @@ class DigitalMultimeter(QMainWindow):
         super().__init__()
         
         # Fenstereigenschaften festlegen
-        self.setWindowTitle("Digital Multimeter - MCC 118")
+        self.setWindowTitle("Digital Multimeter")
         self.setGeometry(100, 100, 600, 600)
         
         # Messungsmodus (Spannung oder Strom)
@@ -177,34 +165,34 @@ class DigitalMultimeter(QMainWindow):
         haupt_layout.addWidget(self.messwert_anzeige)
         
         # Messungseinstellungen-Gruppe
-        einstellungen_gruppe = QGroupBox("Measurement Settings")
+        einstellungen_gruppe = QGroupBox("Messeinstellungen")
         einstellungen_layout = QGridLayout(einstellungen_gruppe)
         
         # Messmodus-Buttons
         modus_layout = QHBoxLayout()
         
         # Spannung DC-Button
-        self.spannung_dc_btn = QPushButton("V=")
-        self.spannung_dc_btn.setFixedSize(60, 40)
+        self.spannung_dc_btn = QPushButton("DC Spannung (V)")
+        self.spannung_dc_btn.setFixedSize(100, 40)
         self.spannung_dc_btn.setCheckable(True)
         self.spannung_dc_btn.setChecked(True)  # Standardmäßig ausgewählt
         self.spannung_dc_btn.clicked.connect(lambda: self.setze_modus("Spannung DC"))
         
         # Spannung AC-Button
-        self.spannung_ac_btn = QPushButton("V~")
-        self.spannung_ac_btn.setFixedSize(60, 40)
+        self.spannung_ac_btn = QPushButton("AC Spannung (V)")
+        self.spannung_ac_btn.setFixedSize(100, 40)
         self.spannung_ac_btn.setCheckable(True)
         self.spannung_ac_btn.clicked.connect(lambda: self.setze_modus("Spannung AC"))
         
         # Strom DC-Button
-        self.strom_dc_btn = QPushButton("A=")
-        self.strom_dc_btn.setFixedSize(60, 40)
+        self.strom_dc_btn = QPushButton("DC Strom (A)")
+        self.strom_dc_btn.setFixedSize(100, 40)
         self.strom_dc_btn.setCheckable(True)
         self.strom_dc_btn.clicked.connect(lambda: self.setze_modus("Strom DC"))
         
         # Strom AC-Button
-        self.strom_ac_btn = QPushButton("A~")
-        self.strom_ac_btn.setFixedSize(60, 40)
+        self.strom_ac_btn = QPushButton("AC Strom (A)")
+        self.strom_ac_btn.setFixedSize(100, 40)
         self.strom_ac_btn.setCheckable(True)
         self.strom_ac_btn.clicked.connect(lambda: self.setze_modus("Strom AC"))
         
@@ -219,12 +207,12 @@ class DigitalMultimeter(QMainWindow):
         # Modus-Label und Bereichseinstellung
         einstellungen_layout.addWidget(QLabel("Mode"), 1, 0)
         self.modus_combo = QComboBox()
-        self.modus_combo.addItem("Specify Range")
+        self.modus_combo.addItem("Messbereich")
         self.modus_combo.setEnabled(True)
         einstellungen_layout.addWidget(self.modus_combo, 1, 1)
         
         # Bereichs-Label und Dropdown
-        einstellungen_layout.addWidget(QLabel("Range"), 2, 0)
+        einstellungen_layout.addWidget(QLabel("Messbereich"), 2, 0)
         self.bereich_combo = QComboBox()
         self.aktualisiere_bereiche()
         self.bereich_combo.currentIndexChanged.connect(self.bereich_geaendert)
@@ -240,23 +228,17 @@ class DigitalMultimeter(QMainWindow):
         haupt_layout.addWidget(einstellungen_gruppe)
         
         # Gerätekontrolle-Gruppe
-        kontrolle_gruppe = QGroupBox("Instrument Control")
+        kontrolle_gruppe = QGroupBox("Instrumentensteuerung")
         kontrolle_layout = QGridLayout(kontrolle_gruppe)
         
         # Geräteauswahl
-        kontrolle_layout.addWidget(QLabel("Device"), 0, 0)
+        kontrolle_layout.addWidget(QLabel("Gerät"), 0, 0)
         geraet_combo = QComboBox()
-        geraet_combo.addItem("MCC 118 (Raspberry Pi)")
+        geraet_combo.addItem("MCC 118")
         kontrolle_layout.addWidget(geraet_combo, 0, 1)
         
-        # Erfassungsmodus
-        kontrolle_layout.addWidget(QLabel("Acquisition Mode"), 0, 2)
-        erfassung_combo = QComboBox()
-        erfassung_combo.addItem("Run Continuously")
-        kontrolle_layout.addWidget(erfassung_combo, 0, 3)
-        
         # Run/Stop/Help Buttons
-        run_btn = QPushButton("Run")
+        run_btn = QPushButton("Start")
         run_btn.setStyleSheet("background-color: green; color: white;")
         run_btn.setFixedSize(80, 40)
         run_btn.clicked.connect(self.starten)
@@ -266,7 +248,7 @@ class DigitalMultimeter(QMainWindow):
         stop_btn.setFixedSize(80, 40)
         stop_btn.clicked.connect(self.stoppen)
         
-        help_btn = QPushButton("Help")
+        help_btn = QPushButton("Hilfe")
         help_btn.setFixedSize(80, 40)
         help_btn.clicked.connect(self.hilfe_anzeigen)
         
@@ -359,16 +341,16 @@ class DigitalMultimeter(QMainWindow):
         from PyQt5.QtWidgets import QMessageBox
         
         hilfe_text = """
-        Digitaler Multimeter für MCC 118
+        Digitaler Multimeter
         
         Bedienung:
-        1. Wählen Sie den Messmodus (V= für Gleichspannung, A= für Gleichstrom)
+        1. Wählen Sie den Messmodus durch Klicken 
+            auf die entsprechenden Tasten
         2. Wählen Sie den gewünschten Messbereich
-        3. Drücken Sie 'Run', um die Messung zu starten
+        3. Drücken Sie 'Start', um die Messung zu starten
         4. Drücken Sie 'Stop', um die Messung zu beenden
         
-        Hinweis: Dies ist eine Simulation. Für reale Messungen mit dem MCC 118 
-        muss die Hardware angeschlossen und konfiguriert werden.
+        Hinweis: Dies ist eine Simulation. 
         """
         
         QMessageBox.information(self, "Hilfe - Digitaler Multimeter", hilfe_text)

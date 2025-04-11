@@ -22,9 +22,9 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
   - `numpy`
   - `matplotlib`
   - `pandas`
-  - `datetime`
   - `daqhats`
   - `PyQt5`
+  - `pyqtgraph`
 
 ## ⚙️ Installation
 
@@ -36,7 +36,7 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
    sudo apt upgrade
    ```
 
-4. Repository klonen:
+3. Repository klonen:
 
    ```bash
    git clone https://github.com/MSY-Walter/Projektarbeit.git
@@ -75,9 +75,13 @@ Das System bietet folgende Standard-Messroutinen:
 
 - `docs/`: Dokumentation
 - `src/`: Quellcode-Verzeichnis
-  - `Multimeter.py`: Dashbord für Multimeter
-  - `Oszilloskop_Basis.py`: Basis-Dashboard für Oszilloskop
-  - `Oszilloskop_Erweiterung.py`: Erweiteres Dashboard für Oszilloskop
+  - `DMM_V1.py`: Dashbord für Multimeter mit tkinter
+  - `DMM_V2.py`: Dashbord für Multimeter mit PyQt5
+  - `Oszilloskop_V1_Basis.py`: Basis-Dashboard für Oszilloskop mit tkinter
+  - `Oszilloskop_V1_Erweiterung.py`: Erweiteres Dashboard für Oszilloskop mit tkinter
+  - `Oszilloskop_V2.py`: Dashboard für Oszilloskop mit PyQt5
+  - `Signal_Generator.py`: Datei zu Erzeugung der simulierte Signale
+  - `Spannung_Strom_Generator.py`: Datei zu Erzeugung der simulierte Spannung und Strom
 - `.gitignore`: Bei commit ignorieren
 - `LICENSE`: MIT License
 - `README.md`: Diese Datei

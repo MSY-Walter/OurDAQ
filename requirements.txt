@@ -1,6 +1,6 @@
 numpy
 matplotlib
 pandas
-datetime
 daqhats
 PyQt5
+pyqtgraph
