@@ -23,6 +23,8 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
   - `matplotlib`
   - `pandas`
   - `datetime`
+  - `daqhats`
+  - `PyQt5`
 
 ## ⚙️ Installation
 
