@@ -4,6 +4,7 @@
 """
 Digitaler Multimeter für MCC 118
 Ein LabVIEW-ähnlicher DMM für Spannungs- und Strommessungen
+Mit Überlastungswarnung
 """
 
 import sys
@@ -25,11 +26,13 @@ class MesswertAnzeige(QWidget):
         self.wert = 0.0
         self.einheit = "V DC"
         self.bereich = 20.0
+        self.ueberlast = False  # Neuer Zustand für Überlast
         self.setMinimumHeight(120)
         self.setMinimumWidth(400)
         
         # Farbe für die Anzeige (Türkis ähnlich wie in LabVIEW)
         self.farbe = QColor(0, 210, 210)
+        self.farbe_ueberlast = QColor(255, 50, 50)  # Rote Farbe für Überlast
         
         # Setze schwarzen Hintergrund
         self.setAutoFillBackground(True)
@@ -37,9 +40,10 @@ class MesswertAnzeige(QWidget):
         palette.setColor(QPalette.Window, Qt.black)
         self.setPalette(palette)
     
-    def set_wert(self, wert):
-        """Setzt den anzuzeigenden Wert"""
+    def set_wert(self, wert, ueberlast=False):
+        """Setzt den anzuzeigenden Wert und Überlastzustand"""
         self.wert = wert
+        self.ueberlast = ueberlast
         self.update()
     
     def set_einheit(self, einheit):
@@ -57,11 +61,20 @@ class MesswertAnzeige(QWidget):
         qp = QPainter(self)
         qp.setRenderHint(QPainter.Antialiasing)
         
+        # Wähle die richtige Farbe basierend auf Überlastzustand
+        aktuelle_farbe = self.farbe_ueberlast if self.ueberlast else self.farbe
+        
         # Zeichne den Wert
         font = QFont("Arial", 32, QFont.Bold)
         qp.setFont(font)
-        qp.setPen(self.farbe)
-        text = f"{self.wert:.2f} {self.einheit}"
+        qp.setPen(aktuelle_farbe)
+        
+        # Zeige Überlast-Text oder normalen Wert
+        if self.ueberlast:
+            text = "ÜBERLAST!"
+        else:
+            text = f"{self.wert:.2f} {self.einheit}"
+            
         qp.drawText(self.rect(), Qt.AlignCenter, text)
         
         # Zeichne den Balken
@@ -70,22 +83,26 @@ class MesswertAnzeige(QWidget):
         balken_breite = self.width() - 40
         balken_x = 20
         
-        qp.setPen(QPen(self.farbe, 1))
+        qp.setPen(QPen(aktuelle_farbe, 1))
         qp.drawRect(balken_x, balken_y, balken_breite, balken_hoehe)
         
-        # Fülle den Balken entsprechend dem Wert
-        prozent = min(max(0, abs(self.wert) / self.bereich), 1.0)
-        qp.setBrush(QBrush(self.farbe))
+        # Fülle den Balken entsprechend dem Wert (bei Überlast komplett)
+        if self.ueberlast:
+            prozent = 1.0
+        else:
+            prozent = min(max(0, abs(self.wert) / self.bereich), 1.0)
+            
+        qp.setBrush(QBrush(aktuelle_farbe))
         qp.drawRect(balken_x, balken_y, int(balken_breite * prozent), balken_hoehe)
         
         # Zeichne Markierungen auf dem Balken
-        qp.setPen(QPen(self.farbe, 1))
+        qp.setPen(QPen(aktuelle_farbe, 1))
         for i in range(11):
             x = balken_x + (balken_breite * i) // 10
             qp.drawLine(x, balken_y - 2, x, balken_y + balken_hoehe + 2)
         
         # Zeichne "% FS" (Full Scale) rechts
-        qp.setPen(self.farbe)
+        qp.setPen(aktuelle_farbe)
         qp.setFont(QFont("Arial", 10))
         qp.drawText(balken_x + balken_breite + 5, balken_y + balken_hoehe, "% FS")
 
@@ -149,6 +166,9 @@ class DigitalMultimeter(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.aktualisiere_messung)
         self.timer.start(100)  # Alle 100 ms aktualisieren
+        
+        # Flag für Überlast-Zustand
+        self.ueberlast_status = False
         
         # UI einrichten
         self.setup_ui()
@@ -285,6 +305,9 @@ class DigitalMultimeter(QMainWindow):
                 self.messwert_anzeige.set_einheit("A DC")
             else:
                 self.messwert_anzeige.set_einheit("A AC")
+        
+        # Beim Moduswechsel Überlast-Status zurücksetzen
+        self.ueberlast_status = False
     
     def aktualisiere_bereiche(self):
         """Aktualisiert die verfügbaren Messbereiche basierend auf dem Messmodus"""
@@ -317,16 +340,42 @@ class DigitalMultimeter(QMainWindow):
         
         # Messwertanzeige aktualisieren
         self.messwert_anzeige.set_bereich(self.bereich)
+        
+        # Überlast-Zustand zurücksetzen
+        self.ueberlast_status = False
     
     @pyqtSlot()
     def aktualisiere_messung(self):
         """Aktualisiert die Messwertanzeige mit neuen Daten"""
         if "Spannung" in self.modus:
-            wert = self.simulator.get_spannung(self.bereich)
+            wert = self.simulator.get_spannung(self.bereich * 1.5)  # Erhöhter Bereich für Simulation
         else:  # Strom-Modus
-            wert = self.simulator.get_strom(self.bereich)
+            wert = self.simulator.get_strom(self.bereich * 1.5)  # Erhöhter Bereich für Simulation
         
-        self.messwert_anzeige.set_wert(wert)
+        # Überprüfe, ob Überlast vorliegt
+        if abs(wert) > self.bereich:
+            if not self.ueberlast_status:  # Nur einmal Ton ausgeben
+                self.ueberlast_status = True
+                self.zeige_ueberlast_warnung()
+            
+            # Anzeige auf Überlast setzen
+            self.messwert_anzeige.set_wert(wert, True)
+        else:
+            # Wenn nicht mehr überlastet, Überlast-Status zurücksetzen
+            if self.ueberlast_status:
+                self.ueberlast_status = False
+            
+            # Normalen Wert anzeigen
+            self.messwert_anzeige.set_wert(wert, False)
+    
+    def zeige_ueberlast_warnung(self):
+        """Zeigt eine Warnungsmeldung an, wenn Überlast erkannt wird"""
+        # Optional: Akustisches Signal abspielen (wenn verfügbar)
+        try:
+            from PyQt5.QtMultimedia import QSound
+            QSound.play("alarm.wav")
+        except:
+            pass  # Ignoriere Fehler, wenn Sound nicht unterstützt wird
     
     def starten(self):
         """Startet die Messung"""
@@ -345,12 +394,15 @@ class DigitalMultimeter(QMainWindow):
         
         Bedienung:
         1. Wählen Sie den Messmodus durch Klicken 
-            auf die entsprechenden Tasten
+           auf die entsprechenden Tasten
         2. Wählen Sie den gewünschten Messbereich
         3. Drücken Sie 'Start', um die Messung zu starten
         4. Drücken Sie 'Stop', um die Messung zu beenden
         
-        Hinweis: Dies ist eine Simulation. 
+        Hinweise: 
+        - Bei Überschreitung des Messbereichs wird "ÜBERLAST!"
+          angezeigt und die Anzeige wechselt auf rot
+        - Dies ist eine Simulation
         """
         
         QMessageBox.information(self, "Hilfe - Digitaler Multimeter", hilfe_text)

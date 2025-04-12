@@ -5,6 +5,7 @@
 Funktionsgenerator für MCC 118
 Ein LabVIEW-ähnlicher Signalgenerator für verschiedene Wellenformen
 Erzeugt digitale Signale zur Weiterleitung an einen DAC
+Optimiert für den MCC 118 DAQ HAT mit 100 kHz Abtastrate
 """
 
 import sys
@@ -149,7 +150,7 @@ class Funktionsgenerator(QMainWindow):
         # Frequenz-Einstellung
         einstellungen_layout.addWidget(QLabel("Frequenz (Hz):"), 1, 0)
         self.frequenz_spin = QDoubleSpinBox()
-        self.frequenz_spin.setRange(0.1, 20000.0)
+        self.frequenz_spin.setRange(0.1, 50000.0)  # Erhöht auf 50 kHz für MCC 118
         self.frequenz_spin.setValue(self.frequenz)
         self.frequenz_spin.setSingleStep(10)
         self.frequenz_spin.setDecimals(1)
@@ -166,7 +167,7 @@ class Funktionsgenerator(QMainWindow):
         # Amplitude-Einstellung
         einstellungen_layout.addWidget(QLabel("Amplitude (V):"), 3, 0)
         self.amplitude_spin = QDoubleSpinBox()
-        self.amplitude_spin.setRange(0.0, 10.0)
+        self.amplitude_spin.setRange(0.0, 10.0)  # 0-10V Bereich für Amplitude
         self.amplitude_spin.setValue(self.amplitude)
         self.amplitude_spin.setSingleStep(0.1)
         self.amplitude_spin.valueChanged.connect(self.amplitude_geaendert)
@@ -174,11 +175,16 @@ class Funktionsgenerator(QMainWindow):
         
         einstellungen_layout.addWidget(QLabel("Offset (V):"), 3, 2)
         self.offset_spin = QDoubleSpinBox()
-        self.offset_spin.setRange(-10.0, 10.0)
+        self.offset_spin.setRange(-10.0, 10.0)  # ±10V Bereich für Offset
         self.offset_spin.setValue(self.offset)
         self.offset_spin.setSingleStep(0.1)
         self.offset_spin.valueChanged.connect(self.offset_geaendert)
         einstellungen_layout.addWidget(self.offset_spin, 3, 3)
+        
+        # Spannungsbegrenzungs-Label hinzufügen
+        spannung_label = QLabel("Hinweis: Amplitude + |Offset| sollte 10V nicht überschreiten")
+        spannung_label.setStyleSheet("color: yellow; font-style: italic;")
+        einstellungen_layout.addWidget(spannung_label, 5, 0, 1, 4)
         
         einstellungen_layout.addWidget(QLabel("Phase (Grad):"), 4, 0)
         self.phase_spin = QDoubleSpinBox()
@@ -223,7 +229,7 @@ class Funktionsgenerator(QMainWindow):
     def log_to_slider(self, frequenz):
         """Konvertiert Frequenz (Hz) zu logarithmischer Slider-Position"""
         min_freq = 0.1
-        max_freq = 20000.0
+        max_freq = 50000.0  # Angepasst auf 50 kHz (Hälfte der maximalen Abtastrate von MCC 118)
         min_slider = 1
         max_slider = 2000
         
@@ -239,7 +245,7 @@ class Funktionsgenerator(QMainWindow):
     def slider_to_log(self, position):
         """Konvertiert Slider-Position zu Frequenz (Hz) in logarithmischer Skala"""
         min_freq = 0.1
-        max_freq = 20000.0
+        max_freq = 50000.0  # Angepasst auf 50 kHz (Hälfte der maximalen Abtastrate von MCC 118)
         min_slider = 1
         max_slider = 2000
         
@@ -295,12 +301,35 @@ class Funktionsgenerator(QMainWindow):
         self.amplitude = amplitude
         self.update_daten()
         self.aktualisiere_anzeige()
+        
+        # Überprüfen, ob die Gesamtausgangsspannung im gültigen Bereich liegt
+        self.validate_voltage_range()
     
     def offset_geaendert(self, offset):
         """Wird aufgerufen, wenn der Offset geändert wird"""
         self.offset = offset
         self.update_daten()
         self.aktualisiere_anzeige()
+        
+        # Überprüfen, ob die Gesamtausgangsspannung im gültigen Bereich liegt
+        self.validate_voltage_range()
+    
+    def validate_voltage_range(self):
+        """Überprüft, ob die Kombination aus Amplitude und Offset gültig ist"""
+        max_signal = self.amplitude + abs(self.offset)
+        
+        # Wenn das Signal den ±10V Bereich überschreiten könnte
+        if max_signal > 10.0:
+            self.statusBar().showMessage(f"Warnung: Amplitude + |Offset| = {max_signal:.2f}V überschreitet den ±10V Bereich!", 3000)
+            
+            # Ändere die Textfarbe im StatusBar, um die Warnung hervorzuheben
+            self.statusBar().setStyleSheet("color: yellow;")
+        else:
+            # Normale Statusanzeige wiederherstellen
+            self.statusBar().setStyleSheet("")
+            
+            # Normalen Status wiederherstellen (nach 3 Sekunden)
+            QTimer.singleShot(3000, lambda: self.statusBar().showMessage(f"{self.wellenform} {self.frequenz:.1f} Hz, {self.amplitude:.2f} V"))
     
     def phase_geaendert(self, phase):
         """Wird aufgerufen, wenn die Phase geändert wird"""
@@ -437,17 +466,27 @@ class Funktionsgenerator(QMainWindow):
         from PyQt5.QtWidgets import QMessageBox
         
         hilfe_text = """
-        Funktionsgenerator
+        Funktionsgenerator für MCC 118
         
         Bedienung:
         1. Wählen Sie die gewünschte Wellenform
-        2. Stellen Sie Frequenz, Amplitude, Offset und Phase ein
+        2. Stellen Sie Frequenz (bis zu 50 kHz), Amplitude, Offset und Phase ein
         3. Für Rechteckwellen können Sie den Duty-Cycle anpassen
-        4. Unter 'Erweiterte Einstellungen' können Sie Abtastrate und Signallänge ändern
-        5. Drücken Sie 'Start', um die Generierung zu starten
-        6. Drücken Sie 'Stop', um die Generierung zu beenden
+        4. Drücken Sie 'Start', um die Generierung zu starten
+        5. Drücken Sie 'Stop', um die Generierung zu beenden
         
-        Hinweis: Die generierten Signale können über einen DAC in analoge Signale umgewandelt werden.
+        Spannungsbegrenzungen:
+        - Die Kombination aus Amplitude und Offset sollte im Bereich von ±10V liegen
+        - Formel: Amplitude + |Offset| ≤ 10V für gültige Ausgangssignale
+        
+        Technische Daten:
+        - Frequenzbereich: 0.1 Hz bis 50 kHz
+        - Amplitudenbereich: 0 bis 10 V
+        - Offset-Bereich: -10 V bis +10 V
+        - Phasenbereich: 0° bis 360°
+        
+        Hinweis: Die generierten digitalen Signale können über den MCC 118 DAQ HAT 
+        und einen externen DAC in analoge Signale umgewandelt werden.
         """
         
         QMessageBox.information(self, "Hilfe - Funktionsgenerator", hilfe_text)
