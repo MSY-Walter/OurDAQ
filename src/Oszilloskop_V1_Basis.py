@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use('TkAgg')
 import tkinter as tk
 from tkinter import ttk
 import matplotlib.pyplot as plt

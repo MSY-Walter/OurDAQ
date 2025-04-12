@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use('TkAgg')
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import matplotlib.pyplot as plt
