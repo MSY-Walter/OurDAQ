@@ -23,6 +23,7 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
   - `matplotlib`
   - `pandas`
   - `daqhats`
+  - `mcculw`
   - `PyQt5`
   - `pyqtgraph`
 
