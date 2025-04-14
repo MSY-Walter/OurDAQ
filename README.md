@@ -17,7 +17,8 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
 - `Linux`
 - `Python 3.8+`
 - `Jupyter Notebook`
-- `tkinter`
+- `Tkinter`
+- `PYQT5`
 - Folgende Python-Pakete:
   - `numpy`
   - `matplotlib`
@@ -26,6 +27,7 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
   - `mcculw`
   - `PyQt5`
   - `pyqtgraph`
+  - `openpyxl`
 
 ## ⚙️ Installation
 
@@ -62,6 +64,7 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
    ```bash
    pip install -r requirements.txt
    sudo apt install -y python3-tk
+   sudo apt-get install -y python3-pyqt5
    ```
 
 ## 🚀 Verwendung
@@ -71,6 +74,7 @@ Das System bietet folgende Standard-Messroutinen:
 - Multimeter-Funktionalität
 - Oszilloskop-Funktionalität
 - Netzteil-Funktionalität
+- Funktionsgenerator-Funktionalität
 
 ## 📂 Projektstruktur
 
