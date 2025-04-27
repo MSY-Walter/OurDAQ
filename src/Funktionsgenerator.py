@@ -2,22 +2,20 @@
 # -*- coding: utf-8 -*-
 
 """
-Funktionsgenerator für MCC 118
-Ein LabVIEW-ähnlicher Signalgenerator für verschiedene Wellenformen
-Erzeugt digitale Signale zur Weiterleitung an einen DAC
-Optimiert für den MCC 118 DAQ HAT mit 100 kHz Abtastrate
+Funktionsgenerator für AD9833
+Ein LabVIEW-ähnlicher Signalgenerator für Sinuswelle, Rechteckwelle und Dreieckwelle
+Optimiert für den AD9833 DDS-Chip, der keine Sägezahnwelle und keine variable Duty-Cycle unterstützt
 """
 
 import sys
-import time
 import math
 import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QPushButton, 
                            QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, 
-                           QComboBox, QCheckBox, QFrame, QGroupBox, QSlider,
-                           QDoubleSpinBox, QSpinBox, QTabWidget, QSizePolicy)
-from PyQt5.QtCore import Qt, QTimer, pyqtSlot
-from PyQt5.QtGui import QPalette, QColor, QFont, QPainter, QPen, QBrush
+                           QComboBox, QGroupBox, QSlider,
+                           QDoubleSpinBox)
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QPalette, QColor
 import pyqtgraph as pg
 
 
@@ -86,7 +84,7 @@ class Funktionsgenerator(QMainWindow):
         super().__init__()
         
         # Fenstereigenschaften festlegen
-        self.setWindowTitle("Funktionsgenerator")
+        self.setWindowTitle("Funktionsgenerator für AD9833")
         self.setGeometry(100, 100, 900, 700)  # Vergrößerte Startgröße
         
         # Signalgeneratorparameter
@@ -95,7 +93,6 @@ class Funktionsgenerator(QMainWindow):
         self.amplitude = 5.0    # V
         self.offset = 0.0       # V
         self.phase = 0.0        # Grad
-        self.duty_cycle = 50    # % (für Rechteck)
         self.abtastrate = 44100 # Hz
         self.signal_laenge = 1.0 # Sekunden
         
@@ -131,26 +128,14 @@ class Funktionsgenerator(QMainWindow):
         # Wellenform-Auswahl
         einstellungen_layout.addWidget(QLabel("Wellenform:"), 0, 0)
         self.wellenform_combo = QComboBox()
-        self.wellenform_combo.addItems(["Sinus", "Rechteck", "Dreieck", "Sägezahn"])
+        self.wellenform_combo.addItems(["Sinus", "Rechteck", "Dreieck"])
         self.wellenform_combo.currentTextChanged.connect(self.wellenform_geaendert)
         einstellungen_layout.addWidget(self.wellenform_combo, 0, 1)
-        
-        # Duty Cycle (nur für Rechteck)
-        self.duty_label = QLabel("Duty Cycle (%):")
-        einstellungen_layout.addWidget(self.duty_label, 0, 2)
-        self.duty_spin = QSpinBox()
-        self.duty_spin.setRange(1, 99)
-        self.duty_spin.setValue(self.duty_cycle)
-        self.duty_spin.valueChanged.connect(self.duty_geaendert)
-        einstellungen_layout.addWidget(self.duty_spin, 0, 3)
-        # Deaktivieren, wenn nicht Rechteck
-        self.duty_spin.setEnabled(self.wellenform == "Rechteck")
-        self.duty_label.setEnabled(self.wellenform == "Rechteck")
         
         # Frequenz-Einstellung
         einstellungen_layout.addWidget(QLabel("Frequenz (Hz):"), 1, 0)
         self.frequenz_spin = QDoubleSpinBox()
-        self.frequenz_spin.setRange(0.1, 50000.0)  # Erhöht auf 50 kHz für MCC 118
+        self.frequenz_spin.setRange(0.1, 25000000.0)  # AD9833 kann bis zu 25 MHz
         self.frequenz_spin.setValue(self.frequenz)
         self.frequenz_spin.setSingleStep(10)
         self.frequenz_spin.setDecimals(1)
@@ -229,7 +214,7 @@ class Funktionsgenerator(QMainWindow):
     def log_to_slider(self, frequenz):
         """Konvertiert Frequenz (Hz) zu logarithmischer Slider-Position"""
         min_freq = 0.1
-        max_freq = 50000.0  # Angepasst auf 50 kHz (Hälfte der maximalen Abtastrate von MCC 118)
+        max_freq = 25000000.0  # Max. Frequenz des AD9833 (25 MHz)
         min_slider = 1
         max_slider = 2000
         
@@ -245,7 +230,7 @@ class Funktionsgenerator(QMainWindow):
     def slider_to_log(self, position):
         """Konvertiert Slider-Position zu Frequenz (Hz) in logarithmischer Skala"""
         min_freq = 0.1
-        max_freq = 50000.0  # Angepasst auf 50 kHz (Hälfte der maximalen Abtastrate von MCC 118)
+        max_freq = 25000000.0  # Max. Frequenz des AD9833 (25 MHz)
         min_slider = 1
         max_slider = 2000
         
@@ -260,10 +245,6 @@ class Funktionsgenerator(QMainWindow):
     def wellenform_geaendert(self, wellenform):
         """Wird aufgerufen, wenn die Wellenform geändert wird"""
         self.wellenform = wellenform
-        
-        # Duty-Cycle nur für Rechteckwelle aktivieren
-        self.duty_spin.setEnabled(wellenform == "Rechteck")
-        self.duty_label.setEnabled(wellenform == "Rechteck")
         
         # Daten aktualisieren
         self.update_daten()
@@ -337,12 +318,6 @@ class Funktionsgenerator(QMainWindow):
         self.update_daten()
         self.aktualisiere_anzeige()
     
-    def duty_geaendert(self, duty):
-        """Wird aufgerufen, wenn der Duty-Cycle geändert wird"""
-        self.duty_cycle = duty
-        self.update_daten()
-        self.aktualisiere_anzeige()
-    
     def abtastrate_geaendert(self, abtastrate):
         """Wird aufgerufen, wenn die Abtastrate geändert wird"""
         self.abtastrate = int(abtastrate)
@@ -388,32 +363,13 @@ class Funktionsgenerator(QMainWindow):
             self.daten = self.amplitude * np.sin(2 * np.pi * self.frequenz * zeit + phase_rad) + self.offset
         
         elif self.wellenform == "Rechteck":
-            # Rechteckwelle mit einstellbarem Duty-Cycle
-            periode = 1.0 / self.frequenz
-            duty_zeit = periode * (self.duty_cycle / 100.0)
-            
-            # Modulo-Zeit für jede Periode
-            mod_zeit = np.mod(zeit + (phase_rad / (2 * np.pi * self.frequenz)), periode)
-            
-            # Rechteckwelle erstellen
-            self.daten = np.where(mod_zeit < duty_zeit, 
-                                  self.amplitude + self.offset, 
-                                  -self.amplitude + self.offset)
+            # Rechteckwelle mit festem 50% Duty-Cycle (AD9833 spezifisch)
+            self.daten = self.amplitude * np.sign(np.sin(2 * np.pi * self.frequenz * zeit + phase_rad)) + self.offset
         
         elif self.wellenform == "Dreieck":
             # Dreieckwelle: 2A/π * arcsin(sin(2π * f * t + φ)) + offset
             self.daten = (2 * self.amplitude / np.pi) * np.arcsin(
                 np.sin(2 * np.pi * self.frequenz * zeit + phase_rad)) + self.offset
-        
-        elif self.wellenform == "Sägezahn":
-            # Sägezahnwelle
-            periode = 1.0 / self.frequenz
-            # Modulo-Zeit für jede Periode mit Phasenverschiebung
-            mod_zeit = np.mod(zeit + (phase_rad / (2 * np.pi * self.frequenz)), periode)
-            # Normalisierte Zeit (0 bis 1) in jeder Periode
-            norm_zeit = mod_zeit / periode
-            # Sägezahnwelle (-A bis +A)
-            self.daten = (2 * norm_zeit - 1) * self.amplitude + self.offset
     
     def aktualisiere_anzeige(self):
         """Aktualisiert die Wellenform-Visualisierung"""
@@ -432,8 +388,6 @@ class Funktionsgenerator(QMainWindow):
         
         # Statusbar-Info aktualisieren
         status_text = f"{self.wellenform} {self.frequenz:.1f} Hz, {self.amplitude:.2f} V"
-        if self.wellenform == "Rechteck":
-            status_text += f", Duty: {self.duty_cycle}%"
         self.statusBar().showMessage(status_text)
     
     def starten(self):
@@ -445,7 +399,7 @@ class Funktionsgenerator(QMainWindow):
         # Statusanzeige updaten
         self.statusBar().showMessage("Generiere Signal: " + self.statusBar().currentMessage())
         
-        # Timer starten (für Animation, in echter Anwendung würde hier die DAC-Ausgabe gestartet)
+        # Timer starten (für Animation, in echter Anwendung würde hier die AD9833-Steuerung gestartet)
         self.timer.start(100)
     
     def stoppen(self):
@@ -466,34 +420,33 @@ class Funktionsgenerator(QMainWindow):
         from PyQt5.QtWidgets import QMessageBox
         
         hilfe_text = """
-        Funktionsgenerator für MCC 118
+        Funktionsgenerator für AD9833
         
         Bedienung:
-        1. Wählen Sie die gewünschte Wellenform
-        2. Stellen Sie Frequenz (bis zu 50 kHz), Amplitude, Offset und Phase ein
-        3. Für Rechteckwellen können Sie den Duty-Cycle anpassen
-        4. Drücken Sie 'Start', um die Generierung zu starten
-        5. Drücken Sie 'Stop', um die Generierung zu beenden
+        1. Wählen Sie die gewünschte Wellenform (Sinus, Rechteck oder Dreieck)
+        2. Stellen Sie Frequenz (bis zu 25 MHz), Amplitude, Offset und Phase ein
+        3. Drücken Sie 'Start', um die Generierung zu starten
+        4. Drücken Sie 'Stop', um die Generierung zu beenden
         
         Spannungsbegrenzungen:
         - Die Kombination aus Amplitude und Offset sollte im Bereich von ±10V liegen
         - Formel: Amplitude + |Offset| ≤ 10V für gültige Ausgangssignale
         
-        Technische Daten:
-        - Frequenzbereich: 0.1 Hz bis 50 kHz
-        - Amplitudenbereich: 0 bis 10 V
-        - Offset-Bereich: -10 V bis +10 V
-        - Phasenbereich: 0° bis 360°
+        AD9833 Eigenschaften:
+        - Unterstützt Sinus-, Rechteck- und Dreieckwellen
+        - Rechteckwellen haben festen 50% Duty-Cycle
+        - Keine direkte Unterstützung für Sägezahnwellen
+        - Frequenzbereich: 0.1 Hz bis 25 MHz
         
-        Hinweis: Die generierten digitalen Signale können über den MCC 118 DAQ HAT 
-        und einen externen DAC in analoge Signale umgewandelt werden.
+        Hinweis: Die generierten digitalen Signale können über den AD9833 DDS-Chip
+        in analoge Signale umgewandelt werden.
         """
         
         QMessageBox.information(self, "Hilfe - Funktionsgenerator", hilfe_text)
 
 
 class SignalDatenGenerator:
-    """Klasse zur Erzeugung verschiedener Signalformen für die DAC-Ausgabe"""
+    """Klasse zur Erzeugung verschiedener Signalformen für die AD9833-Steuerung"""
     
     def __init__(self, abtastrate=44100):
         self.abtastrate = abtastrate
@@ -505,23 +458,16 @@ class SignalDatenGenerator:
         phase_rad = phase * (np.pi / 180.0)
         return amplitude * np.sin(2 * np.pi * frequenz * t + phase_rad) + offset
     
-    def generiere_rechteck(self, frequenz, amplitude, dauer, duty_cycle=50, offset=0.0, phase=0.0):
-        """Generiert eine Rechteckwelle mit den angegebenen Parametern"""
+    def generiere_rechteck(self, frequenz, amplitude, dauer, offset=0.0, phase=0.0):
+        """Generiert eine Rechteckwelle mit festem 50% Duty-Cycle (AD9833-spezifisch)"""
         samples = int(self.abtastrate * dauer)
         t = np.linspace(0, dauer, samples, endpoint=False)
         
-        # Periode und Duty-Zeit berechnen
-        periode = 1.0 / frequenz
-        duty_zeit = periode * (duty_cycle / 100.0)
-        
         # Phasenverschiebung in Sekunden
-        phase_sek = (phase / 360.0) * periode
+        phase_rad = phase * (np.pi / 180.0)
         
-        # Zeit mit Phasenverschiebung
-        t_phase = (t + phase_sek) % periode
-        
-        # Rechteckwelle erzeugen
-        rechteck = np.where(t_phase < duty_zeit, amplitude, -amplitude)
+        # Rechteckwelle mit 50% Duty-Cycle erzeugen
+        rechteck = amplitude * np.sign(np.sin(2 * np.pi * frequenz * t + phase_rad))
         
         return rechteck + offset
     
@@ -533,88 +479,6 @@ class SignalDatenGenerator:
         
         # Dreieckwelle über arcsin(sin) erzeugen
         return (2 * amplitude / np.pi) * np.arcsin(np.sin(2 * np.pi * frequenz * t + phase_rad)) + offset
-    
-    def generiere_saegezahn(self, frequenz, amplitude, dauer, offset=0.0, phase=0.0):
-        """Generiert eine Sägezahnwelle mit den angegebenen Parametern"""
-        samples = int(self.abtastrate * dauer)
-        t = np.linspace(0, dauer, samples, endpoint=False)
-        
-        # Periode berechnen
-        periode = 1.0 / frequenz
-        
-        # Phasenverschiebung in Sekunden
-        phase_sek = (phase / 360.0) * periode
-        
-        # Zeit modulieren für jede Periode mit Phasenverschiebung
-        t_mod = (t + phase_sek) % periode
-        
-        # Normalisierte Zeit in jeder Periode (0 bis 1)
-        t_norm = t_mod / periode
-        
-        # Sägezahnwelle erzeugen (-amplitude bis +amplitude)
-        return (2 * t_norm - 1) * amplitude + offset
-    
-    def generiere_rauschen(self, amplitude, dauer, offset=0.0, typ="weiss"):
-        """Generiert Rauschen mit den angegebenen Parametern"""
-        samples = int(self.abtastrate * dauer)
-        
-        if typ.lower() == "weiss":
-            # Weißes Rauschen (gleichverteilte Zufallswerte)
-            rauschen = np.random.uniform(-amplitude, amplitude, samples)
-        elif typ.lower() == "rosa":
-            # Rosa Rauschen (1/f Spektrum)
-            weiss = np.random.normal(0, amplitude, samples)
-            # Fourier-Transformation
-            X = np.fft.rfft(weiss)
-            # Frequenzen
-            f = np.fft.rfftfreq(samples)
-            # 1/f Filter anwenden (vermeidet Division durch Null bei f[0])
-            f[1:] = f[1:] ** (-0.5)  # 1/sqrt(f) für rosa Rauschen
-            f[0] = f[1]
-            X = X * f
-            # Zurück in Zeitbereich
-            rauschen = np.fft.irfft(X)
-            # Normalisierung
-            rauschen = rauschen * (amplitude / np.max(np.abs(rauschen)))
-        else:
-            rauschen = np.random.uniform(-amplitude, amplitude, samples)
-        
-        return rauschen + offset
-    
-    def generiere_burst(self, wellenform, frequenz, amplitude, dauer, 
-                      burst_count=1, burst_rate=1, duty_cycle=50, offset=0.0, phase=0.0):
-        """Generiert ein Burst-Signal mit der angegebenen Wellenform"""
-        samples = int(self.abtastrate * dauer)
-        t = np.linspace(0, dauer, samples, endpoint=False)
-        
-        # Signal mit der angegebenen Wellenform erzeugen
-        if wellenform.lower() == "sinus":
-            signal = self.generiere_sinus(frequenz, amplitude, dauer, offset, phase)
-        elif wellenform.lower() == "rechteck":
-            signal = self.generiere_rechteck(frequenz, amplitude, dauer, duty_cycle, offset, phase)
-        elif wellenform.lower() == "dreieck":
-            signal = self.generiere_dreieck(frequenz, amplitude, dauer, offset, phase)
-        elif wellenform.lower() == "saegezahn":
-            signal = self.generiere_saegezahn(frequenz, amplitude, dauer, offset, phase)
-        else:
-            return np.zeros(samples) + offset
-        
-        # Burst-Hüllkurve erstellen
-        burst_periode = 1.0 / burst_rate
-        burst_aktiv_zeit = burst_periode / burst_count
-        
-        # Zeit modulo Burst-Periode
-        t_mod = np.mod(t, burst_periode)
-        
-        # Burst-Maske erstellen (1 während aktiver Zeit, 0 sonst)
-        burst_maske = np.zeros_like(t)
-        for i in range(burst_count):
-            start_zeit = i * burst_aktiv_zeit
-            end_zeit = (i + 1) * burst_aktiv_zeit
-            burst_maske = np.where((t_mod >= start_zeit) & (t_mod < end_zeit), 1.0, burst_maske)
-        
-        # Burst-Signal durch Multiplikation mit der Maske
-        return signal * burst_maske
 
 
 if __name__ == "__main__":
