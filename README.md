@@ -1,12 +1,12 @@
-# 📊 Datenerfassungssystem auf Raspberry Pi 4
+# 📊 Datenerfassungssystem auf Raspberry Pi
 
 ## 📋 Projektbeschreibung
 
-Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassungssystems (DAQ) basierend auf Raspberry Pi 4 und Digilent MCC DAQ HATs ab. Das System bietet oszilloskop- und netzteilähnliche Funktionen und dient als Grundlage für ein studentisches Messtechniklabor.
+Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassungssystems (DAQ) basierend auf Raspberry Pi und Digilent MCC DAQ HATs ab. Das System bietet oszilloskop- und netzteilähnliche Funktionen und dient als Grundlage für ein studentisches Messtechniklabor.
 
 ## 💻 Hardwareanforderungen
 
-- `Raspberry Pi 4`
+- `Raspberry Pi`
 - Digilent MCC DAQ HAT `MCC 118`
 - Externe Peripherie:
   - DAC + OPV + Mosfet für Spannungsversorgung
@@ -16,8 +16,6 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
 
 - `Linux`
 - `Python 3.8+`
-- `Jupyter Notebook`
-- `Tkinter`
 - `PYQT5`
 - Folgende Python-Pakete:
   - `numpy`
@@ -63,8 +61,7 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
 
    ```bash
    pip install -r requirements.txt
-   sudo apt install -y python3-tk
-   sudo apt-get install -y python3-pyqt5
+   sudo apt install -y python3-pyqt5
    ```
 
 ## 🚀 Verwendung
@@ -75,17 +72,20 @@ Das System bietet folgende Standard-Messroutinen:
 - Oszilloskop-Funktionalität
 - Netzteil-Funktionalität
 - Funktionsgenerator-Funktionalität
+- Diodenkennlinie/Filterkennlinie-Funktionalität
 
 ## 📂 Projektstruktur
 
 - `docs/`: Dokumentation
 - `src/`: Quellcode-Verzeichnis
-  - `DMM_V1.py`: Dashbord für Multimeter mit tkinter
-  - `DMM_V2.py`: Dashbord für Multimeter mit PyQt5
-  - `Funktionsgenerator.py`: Dashboard zu Erzeugung der Signale mit PyQt5
-  - `Oszilloskop_V1_Basis.py`: Basis-Dashboard für Oszilloskop mit tkinter
-  - `Oszilloskop_V1_Erweiterung.py`: Erweiteres Dashboard für Oszilloskop mit tkinter
-  - `Oszilloskop_V2.py`: Dashboard für Oszilloskop mit PyQt5
+  - `Dashboard_V1.py`: Dashboard für alle Funktionalität (Version 1)
+  - `Diodenkennlinie_V1.py`: Dashboard für Diodenkennlinie (Version 1)
+  - `DMM_V1.py`: Dashboard für Multimeter (Version 1)
+  - `DMM_V2.py`: Dashboard für Multimeter (Version 2)
+  - `Filterkennlinie_V1.py`: Dashboard für Filterkennlinie (Version 1)
+  - `Funktionsgenerator_V1.py`: Dashboard zu Erzeugung der Signale (Version 1)
+  - `Funktionsgenerator_V2.py`: Dashboard zu Erzeugung der Signale (Version 2)
+  - `Oszilloskop_V1.py`: Dashboard für Oszilloskop (Version 1)
   - `Spannung_Strom_Generator.py`: Datei zu Erzeugung der simulierte Spannung und Strom
 - `.gitignore`: Bei commit ignorieren
 - `LICENSE`: MIT License
