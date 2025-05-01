@@ -60,8 +60,9 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
 3. Abhängigkeiten und Pakete installieren:
 
    ```bash
-   pip install -r requirements.txt
    sudo apt install -y python3-pyqt5
+   pip install uv
+   uv pip install -r requirements.txt
    ```
 
 ## 🚀 Verwendung
