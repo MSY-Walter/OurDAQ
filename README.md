@@ -1,10 +1,10 @@
-# 📊 Datenerfassungssystem auf Raspberry Pi
+# Datenerfassungssystem auf Raspberry Pi (OurDAQ)
 
-## 📋 Projektbeschreibung
+## Projektbeschreibung
 
-Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassungssystems (DAQ) basierend auf Raspberry Pi und Digilent MCC DAQ HATs ab. Das System bietet oszilloskop- und netzteilähnliche Funktionen und dient als Grundlage für ein studentisches Messtechniklabor.
+Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdatenerfassungssystems (DAQ) basierend auf Raspberry Pi und Digilent MCC DAQ HATs ab. Das System bietet oszilloskop- und netzteilähnliche Funktionen und dient als Grundlage für ein studentisches Messtechniklabor.
 
-## 💻 Hardwareanforderungen
+## Hardwareanforderungen
 
 - `Raspberry Pi`
 - Digilent MCC DAQ HAT `MCC 118`
@@ -12,11 +12,11 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
   - DAC + OPV + Mosfet für Spannungsversorgung
   - Gehäuse mit geplanten Anschlüssen und Steckern
 
-## 🛠️ Softwareanforderungen
+## Softwareanforderungen
 
 - `Linux`
-- `Python 3.8+`
-- `PYQT5`
+- `Python 3.11+`
+- `PyQt5`
 - Folgende Python-Pakete:
   - `numpy`
   - `matplotlib`
@@ -27,10 +27,11 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
   - `pyqtgraph`
   - `openpyxl`
 
-## ⚙️ Installation
+## Installation
 
 1. Raspberry Pi OS installieren
-2. Python update und upgrade:
+
+2. Update und upgrade:
 
    ```bash
    sudo apt update
@@ -40,6 +41,7 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
 3. Repository klonen:
 
    ```bash
+   cd Workspace
    git clone https://github.com/MSY-Walter/Projektarbeit.git
    ```
 
@@ -48,6 +50,7 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
 1. Virtuelle Umgebung erstellen:
 
    ```bash
+   cd Projektarbeit
    python -m venv .venv
    ```
 
@@ -60,12 +63,24 @@ Dieses Projekt zielt auf die Entwicklung eines prototypischen Messdatenerfassung
 3. Abhängigkeiten und Pakete installieren:
 
    ```bash
-   sudo apt install -y python3-pyqt5
+   sudo apt-get install python3-pyqt5
    pip install uv
    uv pip install -r requirements.txt
    ```
 
-## 🚀 Verwendung
+4. Link von der virtuellen Umgebung zum PyQt5-Systempaket erstellen, Z.B.:
+
+   ```bash
+   ln -s /usr/lib/python3/dist-packages/PyQt5 /home/changlai/Workspace/Projektarbeit/.venv/lib/python3.11/site-packages/
+   ```
+
+5. Python Programm starten
+
+   ```bash
+   python src/Dashboard_V1.py
+   ```
+
+## Verwendung
 
 Das System bietet folgende Standard-Messroutinen:
 
@@ -75,7 +90,7 @@ Das System bietet folgende Standard-Messroutinen:
 - Funktionsgenerator-Funktionalität
 - Diodenkennlinie/Filterkennlinie-Funktionalität
 
-## 📂 Projektstruktur
+## Projektstruktur
 
 - `docs/`: Dokumentation
 - `src/`: Quellcode-Verzeichnis
@@ -93,8 +108,8 @@ Das System bietet folgende Standard-Messroutinen:
 - `README.md`: Diese Datei
 - `requirements.txt`: Python-Pakete
 
-## 🤝 Beitrag leisten
+## Beitrag leisten
 
-## 📜 Lizenz
+## Lizenz
 
 Dieses Projekt steht unter [`MIT License`](LICENSE)

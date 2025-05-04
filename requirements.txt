@@ -3,6 +3,5 @@ matplotlib
 pandas
 daqhats
 mcculw
-PyQt5
 pyqtgraph
 openpyxl
