@@ -23,7 +23,6 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
   - `pandas`
   - `daqhats`
   - `mcculw`
-  - `PyQt5`
   - `pyqtgraph`
   - `openpyxl`
 
@@ -51,7 +50,7 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
 
    ```bash
    cd Projektarbeit
-   python -m venv .venv
+   python3 -m venv .venv
    ```
 
 2. Umgebung aktivieren:
@@ -68,16 +67,16 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
    uv pip install -r requirements.txt
    ```
 
-4. Link von der virtuellen Umgebung zum PyQt5-Systempaket erstellen, Z.B.:
+4. Link von der virtuellen Umgebung zum PyQt5-Systempaket erstellen, z.B.:
 
    ```bash
-   ln -s /usr/lib/python3/dist-packages/PyQt5 /home/changlai/Workspace/Projektarbeit/.venv/lib/python3.11/site-packages/
+   ln -s /usr/lib/python3/dist-packages/PyQt5 /home/sebastian/Workspace/Projektarbeit/.venv/lib/python3.11/site-packages/
    ```
 
 5. Python Programm starten
 
    ```bash
-   python src/Dashboard_V1.py
+   python3 src/Dashboard_V1.py
    ```
 
 ## Verwendung
