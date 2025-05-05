@@ -1,19 +1,24 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 """
 Digitaler Multimeter für MCC 118
 Ein LabVIEW-ähnlicher DMM für Spannungs- und Strommessungen
-Mit Überlastungswarnung
+Mit Überlastungswarnung, Diagrammanzeige und CSV-Datenspeicherung
 """
 
 import sys
 import time
+import os
+import csv
+from datetime import datetime
+import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QPushButton, 
                            QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, 
-                           QComboBox, QCheckBox, QFrame, QGroupBox)
+                           QComboBox, QGroupBox, QStatusBar,
+                           QFileDialog, QMessageBox)
 from PyQt5.QtCore import Qt, QTimer, pyqtSlot
 from PyQt5.QtGui import QPalette, QColor, QFont, QPainter, QPen, QBrush
+import pyqtgraph as pg  # Für die Diagrammanzeige
 
 # Importiere den Datensimulator
 from Spannung_Strom_Generator import DatenSimulator
@@ -145,6 +150,80 @@ class BananaJackVisualisierung(QWidget):
         qp.drawText(self.width() - 70, 80, 40, 20, Qt.AlignCenter, "A")
 
 
+class DiagrammAnzeige(QWidget):
+    """Widget zur Anzeige eines zeitlichen Verlaufs der Messwerte"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(200)
+        self.aktiv = False  # Flag zur Steuerung der Diagrammaktivierung
+        
+        # Layout erstellen
+        layout = QVBoxLayout(self)
+        
+        # PyQtGraph Plot-Widget erstellen
+        self.plot_widget = pg.PlotWidget()
+        self.plot_widget.setBackground('w')  # Weißer Hintergrund
+        self.plot_widget.setLabel('left', 'Wert')
+        self.plot_widget.setLabel('bottom', 'Zeit (s)')
+        self.plot_widget.showGrid(x=True, y=True)
+        
+        # Status-Label hinzufügen
+        self.status_label = QLabel("Diagramm wird angezeigt, wenn Datenaufnahme aktiviert ist")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setStyleSheet("font-weight: bold; color: #555;")
+        
+        # Datenreihe für den Plot
+        self.kurve = self.plot_widget.plot(pen=pg.mkPen(color=(0, 210, 210), width=3))
+        
+        # X- und Y-Daten initialisieren
+        self.x_daten = np.zeros(100)  # Zeit in Sekunden
+        self.y_daten = np.zeros(100)  # Messwerte
+        self.start_zeit = time.time()
+        
+        # Layout aufbauen - zuerst nur Status-Label anzeigen
+        layout.addWidget(self.status_label)
+        layout.addWidget(self.plot_widget)
+        self.plot_widget.hide()  # Plot-Widget initial verstecken
+    
+    def set_aktiv(self, aktiv):
+        """Aktiviert oder deaktiviert das Diagramm"""
+        self.aktiv = aktiv
+        if aktiv:
+            self.status_label.hide()
+            self.plot_widget.show()
+            self.reset_diagramm()  # Diagramm zurücksetzen beim Aktivieren
+        else:
+            self.status_label.show()
+            self.plot_widget.hide()
+    
+    def aktualisiere_diagramm(self, wert):
+        """Aktualisiert das Diagramm mit einem neuen Messwert"""
+        if not self.aktiv:
+            return  # Nichts aktualisieren, wenn nicht aktiv
+            
+        # Aktuelle Zeit seit Start berechnen
+        aktuelle_zeit = time.time() - self.start_zeit
+        
+        # Daten nach links verschieben
+        self.x_daten[:-1] = self.x_daten[1:]
+        self.y_daten[:-1] = self.y_daten[1:]
+        
+        # Neuen Wert hinzufügen
+        self.x_daten[-1] = aktuelle_zeit
+        self.y_daten[-1] = wert
+        
+        # Diagramm aktualisieren
+        self.kurve.setData(self.x_daten, self.y_daten)
+    
+    def reset_diagramm(self):
+        """Setzt das Diagramm zurück"""
+        self.x_daten = np.zeros(100)
+        self.y_daten = np.zeros(100)
+        self.start_zeit = time.time()
+        self.kurve.setData(self.x_daten, self.y_daten)
+
+
 class DigitalMultimeter(QMainWindow):
     """Hauptfenster des Digitalen Multimeters"""
     
@@ -153,7 +232,11 @@ class DigitalMultimeter(QMainWindow):
         
         # Fenstereigenschaften festlegen
         self.setWindowTitle("Digital Multimeter")
-        self.setGeometry(100, 100, 600, 600)
+        self.setGeometry(100, 100, 800, 700)  # Angepasste Fenstergröße
+        
+        # Stelle sicher, dass PyQtGraph dunkles Hintergrundthema verwendet
+        pg.setConfigOption('background', 'w')  # Weißer Hintergrund für alle Plots
+        pg.setConfigOption('foreground', 'k')  # Schwarze Linien und Text
         
         # Messungsmodus (Spannung oder Strom)
         self.modus = "Spannung DC"
@@ -170,8 +253,17 @@ class DigitalMultimeter(QMainWindow):
         # Flag für Überlast-Zustand
         self.ueberlast_status = False
         
+        # Daten für CSV-Export
+        self.messdaten = []
+        self.datenerfassung_aktiv = False
+        
         # UI einrichten
         self.setup_ui()
+        
+        # Statusleiste initialisieren
+        self.statusBar = QStatusBar()
+        self.setStatusBar(self.statusBar)
+        self.statusBar.showMessage("Bereit - Keine Datenaufnahme aktiv")
     
     def setup_ui(self):
         """Richtet die Benutzeroberfläche ein"""
@@ -179,107 +271,194 @@ class DigitalMultimeter(QMainWindow):
         zentral_widget = QWidget()
         self.setCentralWidget(zentral_widget)
         haupt_layout = QVBoxLayout(zentral_widget)
+        haupt_layout.setSpacing(15)  # Mehr Abstand zwischen Elementen
         
         # Messwertanzeige
         self.messwert_anzeige = MesswertAnzeige()
         haupt_layout.addWidget(self.messwert_anzeige)
         
+        # Diagrammanzeige hinzufügen
+        self.diagramm_anzeige = DiagrammAnzeige()
+        haupt_layout.addWidget(self.diagramm_anzeige)
+        
         # Messungseinstellungen-Gruppe
         einstellungen_gruppe = QGroupBox("Messeinstellungen")
-        einstellungen_layout = QGridLayout(einstellungen_gruppe)
+        einstellungen_layout = QHBoxLayout(einstellungen_gruppe)  # Horizontales Layout
         
-        # Messmodus-Buttons
-        modus_layout = QHBoxLayout()
+        # Linke Seite: Buttons für Messmodus
+        buttons_layout = QVBoxLayout()
+        buttons_layout.setSpacing(10)  # Mehr Abstand zwischen Buttons
+        
+        # Label für Messmodus
+        modus_label = QLabel("Messmodus:")
+        modus_label.setFont(QFont("Arial", 10, QFont.Bold))
+        buttons_layout.addWidget(modus_label)
+        
+        # Button-Grid erstellen - 2x2 Layout
+        button_grid = QGridLayout()
+        button_grid.setSpacing(10)
+        
+        # Buttons mit verbessertem Design
+        button_style = """
+        QPushButton {
+            background-color: #f0f0f0;
+            border: 1px solid #a0a0a0;
+            border-radius: 5px;
+            padding: 8px;
+            font-weight: bold;
+        }
+        QPushButton:checked {
+            background-color: #c0e0ff;
+            border: 2px solid #4080ff;
+        }
+        """
         
         # Spannung DC-Button
         self.spannung_dc_btn = QPushButton("DC Spannung (V)")
-        self.spannung_dc_btn.setFixedSize(100, 40)
+        self.spannung_dc_btn.setFixedSize(150, 45)
         self.spannung_dc_btn.setCheckable(True)
         self.spannung_dc_btn.setChecked(True)  # Standardmäßig ausgewählt
+        self.spannung_dc_btn.setStyleSheet(button_style)
         self.spannung_dc_btn.clicked.connect(lambda: self.setze_modus("Spannung DC"))
         
         # Spannung AC-Button
         self.spannung_ac_btn = QPushButton("AC Spannung (V)")
-        self.spannung_ac_btn.setFixedSize(100, 40)
+        self.spannung_ac_btn.setFixedSize(150, 45)
         self.spannung_ac_btn.setCheckable(True)
+        self.spannung_ac_btn.setStyleSheet(button_style)
         self.spannung_ac_btn.clicked.connect(lambda: self.setze_modus("Spannung AC"))
         
         # Strom DC-Button
         self.strom_dc_btn = QPushButton("DC Strom (A)")
-        self.strom_dc_btn.setFixedSize(100, 40)
+        self.strom_dc_btn.setFixedSize(150, 45)
         self.strom_dc_btn.setCheckable(True)
+        self.strom_dc_btn.setStyleSheet(button_style)
         self.strom_dc_btn.clicked.connect(lambda: self.setze_modus("Strom DC"))
         
         # Strom AC-Button
         self.strom_ac_btn = QPushButton("AC Strom (A)")
-        self.strom_ac_btn.setFixedSize(100, 40)
+        self.strom_ac_btn.setFixedSize(150, 45)
         self.strom_ac_btn.setCheckable(True)
+        self.strom_ac_btn.setStyleSheet(button_style)
         self.strom_ac_btn.clicked.connect(lambda: self.setze_modus("Strom AC"))
         
-        # Buttons zum Layout hinzufügen
-        modus_layout.addWidget(self.spannung_dc_btn)
-        modus_layout.addWidget(self.spannung_ac_btn)
-        modus_layout.addWidget(self.strom_dc_btn)
-        modus_layout.addWidget(self.strom_ac_btn)
+        # Buttons zum Grid hinzufügen
+        button_grid.addWidget(self.spannung_dc_btn, 0, 0)
+        button_grid.addWidget(self.spannung_ac_btn, 0, 1)
+        button_grid.addWidget(self.strom_dc_btn, 1, 0)
+        button_grid.addWidget(self.strom_ac_btn, 1, 1)
         
-        einstellungen_layout.addLayout(modus_layout, 0, 0, 1, 2)
+        buttons_layout.addLayout(button_grid)
         
-        # Modus-Label und Bereichseinstellung
-        einstellungen_layout.addWidget(QLabel("Mode"), 1, 0)
-        self.modus_combo = QComboBox()
-        self.modus_combo.addItem("Messbereich")
-        self.modus_combo.setEnabled(True)
-        einstellungen_layout.addWidget(self.modus_combo, 1, 1)
+        # Bereichs-Layout
+        bereich_layout = QVBoxLayout()
+        bereich_layout.setSpacing(10)
         
-        # Bereichs-Label und Dropdown
-        einstellungen_layout.addWidget(QLabel("Messbereich"), 2, 0)
+        # Label für Messbereich
+        bereich_label = QLabel("Messbereich:")
+        bereich_label.setFont(QFont("Arial", 10, QFont.Bold))
+        bereich_layout.addWidget(bereich_label)
+        
+        # Bereichs-Dropdown
         self.bereich_combo = QComboBox()
+        self.bereich_combo.setFixedHeight(30)
+        self.bereich_combo.setStyleSheet("font-size: 10pt;")
         self.aktualisiere_bereiche()
         self.bereich_combo.currentIndexChanged.connect(self.bereich_geaendert)
-        einstellungen_layout.addWidget(self.bereich_combo, 2, 1)
+        bereich_layout.addWidget(self.bereich_combo)
         
-        # Null-Offset Checkbox
-        einstellungen_layout.addWidget(QCheckBox("Null Offset"), 3, 0)
+        # Fülle den Rest des Bereichs-Layouts mit Leerraum
+        bereich_layout.addStretch()
         
         # Banana Jack Visualisierung
         self.banana_visual = BananaJackVisualisierung()
-        einstellungen_layout.addWidget(self.banana_visual, 1, 2, 2, 1)
+        
+        # Füge alle Teile zum Einstellungs-Layout hinzu
+        einstellungen_layout.addLayout(buttons_layout, 2)  # 2 Teile für Buttons
+        einstellungen_layout.addLayout(bereich_layout, 1)  # 1 Teil für Bereich
+        einstellungen_layout.addWidget(self.banana_visual, 1)  # 1 Teil für Banana Jacks
         
         haupt_layout.addWidget(einstellungen_gruppe)
         
-        # Gerätekontrolle-Gruppe
-        kontrolle_gruppe = QGroupBox("Instrumentensteuerung")
-        kontrolle_layout = QGridLayout(kontrolle_gruppe)
+        # Steuerungsgruppe
+        steuerung_gruppe = QGroupBox("Steuerung")
+        steuerung_layout = QHBoxLayout(steuerung_gruppe)
+        steuerung_layout.setSpacing(15)  # Mehr Abstand zwischen Buttons
         
-        # Geräteauswahl
-        kontrolle_layout.addWidget(QLabel("Gerät"), 0, 0)
-        geraet_combo = QComboBox()
-        geraet_combo.addItem("MCC 118")
-        kontrolle_layout.addWidget(geraet_combo, 0, 1)
+        # Button-Styles verbessert
+        # Aufnahme Start Button - Grün mit deutlich sichtbarem Text
+        self.start_aufnahme_btn = QPushButton("Aufnahme starten")
+        self.start_aufnahme_btn.setStyleSheet("""
+            QPushButton {
+                background-color: darkgreen;
+                color: white;
+                font-weight: bold;
+                border-radius: 5px;
+                padding: 8px;
+                font-size: 12pt;
+            }
+            QPushButton:hover {
+                background-color: #00b300;
+            }
+        """)
+        self.start_aufnahme_btn.setFixedSize(200, 45)
+        self.start_aufnahme_btn.clicked.connect(self.starte_aufnahme)
         
-        # Run/Stop/Help Buttons
-        run_btn = QPushButton("Start")
-        run_btn.setStyleSheet("background-color: green; color: white;")
-        run_btn.setFixedSize(80, 40)
-        run_btn.clicked.connect(self.starten)
+        # Aufnahme Stop Button - Rot mit deutlich sichtbarem Text
+        self.stop_aufnahme_btn = QPushButton("Aufnahme stoppen")
+        self.stop_aufnahme_btn.setStyleSheet("""
+            QPushButton {
+                background-color: darkred;
+                color: white;
+                font-weight: bold;
+                border-radius: 5px;
+                padding: 8px;
+                font-size: 12pt;
+            }
+            QPushButton:hover {
+                background-color: #cc0000;
+            }
+        """)
+        self.stop_aufnahme_btn.setFixedSize(200, 45)
+        self.stop_aufnahme_btn.clicked.connect(self.stoppe_aufnahme)
+        self.stop_aufnahme_btn.setEnabled(False)  # Initial deaktiviert
         
-        stop_btn = QPushButton("Stop")
-        stop_btn.setStyleSheet("background-color: red; color: white;")
-        stop_btn.setFixedSize(80, 40)
-        stop_btn.clicked.connect(self.stoppen)
+        # CSV Export Button
+        utility_style = """
+        QPushButton {
+            background-color: #f0f0f0;
+            border: 1px solid #a0a0a0;
+            border-radius: 5px;
+            padding: 8px;
+            font-weight: bold;
+        }
+        QPushButton:hover {
+            background-color: #e0e0e0;
+        }
+        """
         
+        self.csv_export_btn = QPushButton("CSV speichern")
+        self.csv_export_btn.setStyleSheet(utility_style)
+        self.csv_export_btn.setFixedSize(150, 45)
+        self.csv_export_btn.clicked.connect(self.csv_speichern)
+        
+        # Hilfe Button
         help_btn = QPushButton("Hilfe")
-        help_btn.setFixedSize(80, 40)
+        help_btn.setStyleSheet(utility_style)
+        help_btn.setFixedSize(100, 45)
         help_btn.clicked.connect(self.hilfe_anzeigen)
         
-        button_layout = QHBoxLayout()
-        button_layout.addWidget(run_btn)
-        button_layout.addWidget(stop_btn)
-        button_layout.addWidget(help_btn)
+        # Buttons zum Layout hinzufügen
+        steuerung_layout.addWidget(self.start_aufnahme_btn)
+        steuerung_layout.addWidget(self.stop_aufnahme_btn)
+        steuerung_layout.addWidget(self.csv_export_btn)
+        steuerung_layout.addWidget(help_btn)
+        steuerung_layout.addStretch()  # Abstand am Ende
         
-        kontrolle_layout.addLayout(button_layout, 1, 0, 1, 4)
+        haupt_layout.addWidget(steuerung_gruppe)
         
-        haupt_layout.addWidget(kontrolle_gruppe)
+        # Etwas Abstand am Ende hinzufügen
+        haupt_layout.addStretch(1)
     
     def setze_modus(self, modus):
         """Setzt den Messmodus und aktualisiert die Benutzeroberfläche"""
@@ -308,6 +487,28 @@ class DigitalMultimeter(QMainWindow):
         
         # Beim Moduswechsel Überlast-Status zurücksetzen
         self.ueberlast_status = False
+        
+        # Wenn Datenerfassung aktiv ist, Diagramm zurücksetzen
+        if self.datenerfassung_aktiv:
+            self.diagramm_anzeige.reset_diagramm()
+            
+            # Messdaten zurücksetzen
+            self.messdaten = []
+            
+            # Frage Benutzer, ob er die Datenerfassung fortsetzen möchte
+            antwort = QMessageBox.question(
+                self, "Messmode geändert", 
+                "Möchten Sie die Datenerfassung mit dem neuen Messmodus fortsetzen?",
+                QMessageBox.Yes | QMessageBox.No, 
+                QMessageBox.Yes
+            )
+            
+            if antwort == QMessageBox.No:
+                # Datenerfassung deaktivieren
+                self.stoppe_aufnahme()
+            else:
+                # Status aktualisieren
+                self.statusBar.showMessage(f"Datenaufnahme für {self.modus} aktiv - {len(self.messdaten)} Messpunkte")
     
     def aktualisiere_bereiche(self):
         """Aktualisiert die verfügbaren Messbereiche basierend auf dem Messmodus"""
@@ -343,6 +544,14 @@ class DigitalMultimeter(QMainWindow):
         
         # Überlast-Zustand zurücksetzen
         self.ueberlast_status = False
+        
+        # Diagramm zurücksetzen
+        self.diagramm_anzeige.reset_diagramm()
+        
+        # Messdaten zurücksetzen, falls Aufnahme aktiv ist
+        if self.datenerfassung_aktiv:
+            self.messdaten = []
+            self.statusBar.showMessage(f"Datenaufnahme für {self.modus} aktiv - Messbereich auf {bereich_text} geändert")
     
     @pyqtSlot()
     def aktualisiere_messung(self):
@@ -360,16 +569,43 @@ class DigitalMultimeter(QMainWindow):
             
             # Anzeige auf Überlast setzen
             self.messwert_anzeige.set_wert(wert, True)
+            
+            # Statusleiste aktualisieren, wenn Überlast
+            if self.datenerfassung_aktiv:
+                self.statusBar.showMessage(f"ÜBERLAST! Datenaufnahme für {self.modus} aktiv - {len(self.messdaten)} Messpunkte")
         else:
             # Wenn nicht mehr überlastet, Überlast-Status zurücksetzen
             if self.ueberlast_status:
                 self.ueberlast_status = False
+                
+                # Statusleiste aktualisieren, wenn Überlast vorbei
+                if self.datenerfassung_aktiv:
+                    self.statusBar.showMessage(f"Datenaufnahme für {self.modus} aktiv - {len(self.messdaten)} Messpunkte")
             
             # Normalen Wert anzeigen
             self.messwert_anzeige.set_wert(wert, False)
+        
+        # Diagramm aktualisieren (nur wenn Datenerfassung aktiv ist)
+        if self.datenerfassung_aktiv:
+            self.diagramm_anzeige.aktualisiere_diagramm(wert)
+            
+            # Wert zu den Messdaten hinzufügen
+            zeit = datetime.now().strftime("%H:%M:%S.%f")[:-3]  # Uhrzeit mit Millisekunden
+            self.messdaten.append({
+                'Zeit': zeit,
+                'Wert': wert,
+                'Modus': self.modus
+            })
+            
+            # Alle 10 Messpunkte die Statusleiste aktualisieren
+            if len(self.messdaten) % 10 == 0:
+                self.statusBar.showMessage(f"Datenaufnahme für {self.modus} aktiv - {len(self.messdaten)} Messpunkte")
     
     def zeige_ueberlast_warnung(self):
         """Zeigt eine Warnungsmeldung an, wenn Überlast erkannt wird"""
+        # Status aktualisieren statt Dialog anzeigen
+        self.statusBar.showMessage("ÜBERLAST! Messbereichsüberschreitung erkannt!")
+        
         # Optional: Akustisches Signal abspielen (wenn verfügbar)
         try:
             from PyQt5.QtMultimedia import QSound
@@ -377,13 +613,88 @@ class DigitalMultimeter(QMainWindow):
         except:
             pass  # Ignoriere Fehler, wenn Sound nicht unterstützt wird
     
-    def starten(self):
-        """Startet die Messung"""
-        self.timer.start(100)
+    def starte_aufnahme(self):
+        """Startet die Datenaufnahme"""
+        self.datenerfassung_aktiv = True
+        self.messdaten = []  # Daten zurücksetzen
+        
+        # Diagramm aktivieren
+        self.diagramm_anzeige.set_aktiv(True)
+        
+        # Button-Status aktualisieren
+        self.start_aufnahme_btn.setEnabled(False)
+        self.stop_aufnahme_btn.setEnabled(True)
+        
+        # Start-Zeit zurücksetzen
+        self.diagramm_anzeige.reset_diagramm()
+        
+        # Statusleiste aktualisieren statt Dialog anzeigen
+        self.statusBar.showMessage(f"Datenaufnahme für {self.modus} gestartet")
     
-    def stoppen(self):
-        """Stoppt die Messung"""
-        self.timer.stop()
+    def stoppe_aufnahme(self):
+        """Stoppt die Datenaufnahme"""
+        if not self.datenerfassung_aktiv:
+            return
+            
+        self.datenerfassung_aktiv = False
+        
+        # Diagramm deaktivieren
+        self.diagramm_anzeige.set_aktiv(False)
+        
+        # Button-Status aktualisieren
+        self.start_aufnahme_btn.setEnabled(True)
+        self.stop_aufnahme_btn.setEnabled(False)
+        
+        # Statusleiste aktualisieren statt Dialog anzeigen
+        self.statusBar.showMessage(f"Datenaufnahme gestoppt - {len(self.messdaten)} Messpunkte aufgezeichnet")
+    
+    def csv_speichern(self):
+        """Speichert die gesammelten Messdaten als CSV-Datei"""
+        # Prüfen, ob Daten vorhanden sind
+        if not self.messdaten:
+            QMessageBox.warning(self, "Keine Daten", "Es sind keine Messdaten zum Speichern vorhanden.")
+            return
+        
+        # Prüfen, ob Datenerfassung noch aktiv ist
+        if self.datenerfassung_aktiv:
+            antwort = QMessageBox.question(
+                self, "Datenerfassung aktiv", 
+                "Die Datenerfassung ist noch aktiv. Bitte stoppen Sie die Aufnahme vor dem Speichern.\nMöchten Sie die Aufnahme jetzt stoppen?",
+                QMessageBox.Yes | QMessageBox.No, 
+                QMessageBox.Yes
+            )
+            
+            if antwort == QMessageBox.Yes:
+                self.stoppe_aufnahme()
+            else:
+                return  # Benutzer möchte nicht speichern
+        
+        # Dateinamen vorschlagen basierend auf aktuellem Datum und Modus
+        vorschlag = f"Messdaten_{self.modus.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        
+        # Dialog zum Speichern der Datei öffnen
+        dateiname, _ = QFileDialog.getSaveFileName(
+            self, "CSV-Datei speichern", vorschlag, "CSV-Dateien (*.csv)"
+        )
+        
+        if dateiname:
+            try:
+                # CSV-Datei schreiben
+                with open(dateiname, 'w', newline='') as csvfile:
+                    feldnamen = ['Zeit', 'Wert', 'Modus']
+                    writer = csv.DictWriter(csvfile, fieldnames=feldnamen)
+                    
+                    writer.writeheader()
+                    for messung in self.messdaten:
+                        writer.writerow(messung)
+                
+                # Status aktualisieren
+                self.statusBar.showMessage(f"Messdaten wurden in {dateiname} gespeichert")
+            except Exception as e:
+                QMessageBox.critical(
+                    self, "Fehler beim Speichern", 
+                    f"Beim Speichern der Datei ist ein Fehler aufgetreten:\n{str(e)}"
+                )
     
     def hilfe_anzeigen(self):
         """Zeigt Hilfeinformationen an"""
@@ -396,12 +707,24 @@ class DigitalMultimeter(QMainWindow):
         1. Wählen Sie den Messmodus durch Klicken 
            auf die entsprechenden Tasten
         2. Wählen Sie den gewünschten Messbereich
-        3. Drücken Sie 'Start', um die Messung zu starten
-        4. Drücken Sie 'Stop', um die Messung zu beenden
+        3. Klicken Sie 'Aufnahme starten', um die Messwerte
+           aufzuzeichnen und im Diagramm anzuzeigen
+        4. Klicken Sie 'Aufnahme stoppen', um die Aufzeichnung
+           zu beenden
+        
+        Diagramm und Datenerfassung:
+        - Das Diagramm wird nur angezeigt, wenn die 
+          Datenaufnahme aktiviert ist
+        - Bei Änderung des Messmodus werden Sie gefragt, ob 
+          Sie die Datenerfassung fortsetzen möchten
+        - Mit 'CSV speichern' können Sie die aufgezeichneten Daten 
+          in einer CSV-Datei speichern (Zeit, Wert und Modus)
         
         Hinweise: 
         - Bei Überschreitung des Messbereichs wird "ÜBERLAST!"
           angezeigt und die Anzeige wechselt auf rot
+        - Der aktuelle Status wird in der Statusleiste am 
+          unteren Fensterrand angezeigt
         - Dies ist eine Simulation
         """
         
