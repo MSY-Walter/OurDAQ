@@ -39,7 +39,7 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
 
    ```bash
    cd Workspace
-   git clone https://github.com/MSY-Walter/Projektarbeit.git
+   git clone https://github.com/MSY-Walter/OurDAQ.git
    ```
 
 ### Entwicklungsumgebung
@@ -68,7 +68,7 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
 4. Link von der virtuellen Umgebung zum PyQt5-Systempaket erstellen, z.B.: (Hinweis: "sebastian" und "python3.11" muss angepasst werden, wie "user" und "pythonx.xx")
 
    ```bash
-   ln -s /usr/lib/python3/dist-packages/PyQt5 /home/sebastian/Workspace/Projektarbeit/.venv/lib/python3.11/site-packages/
+   ln -s /usr/lib/python3/dist-packages/PyQt5 /home/sebastian/Workspace/OurDAQ/.venv/lib/python3.11/site-packages/
    ```
 
 5. Python Programm starten
