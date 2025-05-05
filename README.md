@@ -28,16 +28,14 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
 
 ## Installation
 
-1. Raspberry Pi OS installieren
-
-2. Update und upgrade:
+1. Update und upgrade:
 
    ```bash
    sudo apt update
    sudo apt upgrade
    ```
 
-3. Repository klonen:
+2. Repository klonen:
 
    ```bash
    cd Workspace
@@ -67,7 +65,7 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
    uv pip install -r requirements.txt
    ```
 
-4. Link von der virtuellen Umgebung zum PyQt5-Systempaket erstellen, z.B.:
+4. Link von der virtuellen Umgebung zum PyQt5-Systempaket erstellen, z.B.: (Hinweis: "sebastian" und "python3.11" muss angepasst werden, wie "user" und "pythonx.xx")
 
    ```bash
    ln -s /usr/lib/python3/dist-packages/PyQt5 /home/sebastian/Workspace/Projektarbeit/.venv/lib/python3.11/site-packages/
@@ -76,7 +74,7 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
 5. Python Programm starten
 
    ```bash
-   python3 src/Dashboard_V1.py
+   python3 src/Dashboard_V2.py
    ```
 
 ## Verwendung
@@ -93,7 +91,9 @@ Das System bietet folgende Standard-Messroutinen:
 
 - `docs/`: Dokumentation
 - `src/`: Quellcode-Verzeichnis
+  - `resources/`: Quelle von images und icons
   - `Dashboard_V1.py`: Dashboard für alle Funktionalität (Version 1)
+  - `Dashboard_V2.py`: Dashboard für alle Funktionalität (Version 2)
   - `Diodenkennlinie_V1.py`: Dashboard für Diodenkennlinie (Version 1)
   - `DMM_V1.py`: Dashboard für Multimeter (Version 1)
   - `DMM_V2.py`: Dashboard für Multimeter (Version 2)
@@ -106,8 +106,6 @@ Das System bietet folgende Standard-Messroutinen:
 - `LICENSE`: MIT License
 - `README.md`: Diese Datei
 - `requirements.txt`: Python-Pakete
-
-## Beitrag leisten
 
 ## Lizenz
 
