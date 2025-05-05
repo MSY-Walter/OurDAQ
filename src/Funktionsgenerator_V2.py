@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 """
@@ -104,7 +103,7 @@ class Funktionsgenerator(QMainWindow):
         self.timer.timeout.connect(self.aktualisiere_anzeige)
         
         # Generierungsstatus
-        self.generierung_aktiv = False
+        self.ausgabe_aktiv = False
         
         # UI einrichten
         self.setup_ui()
@@ -185,16 +184,16 @@ class Funktionsgenerator(QMainWindow):
         steuerung_layout = QHBoxLayout()
         
         # Steuerungsbuttons
-        self.start_btn = QPushButton("Start")
+        self.start_btn = QPushButton("Ausgabe starten")
         self.start_btn.setStyleSheet("background-color: green; color: white;")
-        self.start_btn.setFixedSize(100, 40)
-        self.start_btn.clicked.connect(self.starten)
+        self.start_btn.setFixedSize(150, 40)
+        self.start_btn.clicked.connect(self.ausgabe_starten)
         
-        self.stop_btn = QPushButton("Stop")
+        self.stop_btn = QPushButton("Ausgabe stoppen")
         self.stop_btn.setStyleSheet("background-color: red; color: white;")
-        self.stop_btn.setFixedSize(100, 40)
+        self.stop_btn.setFixedSize(150, 40)
         self.stop_btn.setEnabled(False)
-        self.stop_btn.clicked.connect(self.stoppen)
+        self.stop_btn.clicked.connect(self.ausgabe_stoppen)
         
         self.hilfe_btn = QPushButton("Hilfe")
         self.hilfe_btn.setFixedSize(100, 40)
@@ -208,8 +207,20 @@ class Funktionsgenerator(QMainWindow):
         
         haupt_layout.addLayout(steuerung_layout)
         
-        # Statusbar
-        self.statusBar().showMessage("Bereit")
+        # Status-Label hinzufügen (farbiger Balken)
+        self.status_label = QLabel("Status: Bereit - Kein Signal")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setStyleSheet("font-weight: bold; color: white; background-color: #2a2a2a; padding: 8px;")
+        haupt_layout.addWidget(self.status_label)
+        
+        # Statusleiste für Warnungen
+        self.warnung_label = QLabel("")
+        self.warnung_label.setAlignment(Qt.AlignLeft)
+        self.warnung_label.setStyleSheet("color: #2a2a2a; padding: 4px;")
+        haupt_layout.addWidget(self.warnung_label)
+        
+        # Statusbar ausblenden, da wir das Status-Label verwenden
+        self.statusBar().hide()
     
     def log_to_slider(self, frequenz):
         """Konvertiert Frequenz (Hz) zu logarithmischer Slider-Position"""
@@ -249,6 +260,7 @@ class Funktionsgenerator(QMainWindow):
         # Daten aktualisieren
         self.update_daten()
         self.aktualisiere_anzeige()
+        self.aktualisiere_status()
     
     def frequenz_geaendert(self, frequenz):
         """Wird aufgerufen, wenn die Frequenz im Spinbox geändert wird"""
@@ -262,6 +274,7 @@ class Funktionsgenerator(QMainWindow):
         # Daten aktualisieren
         self.update_daten()
         self.aktualisiere_anzeige()
+        self.aktualisiere_status()
     
     def frequenz_slider_geaendert(self, position):
         """Wird aufgerufen, wenn der Frequenz-Slider bewegt wird"""
@@ -276,12 +289,14 @@ class Funktionsgenerator(QMainWindow):
         self.frequenz = frequenz
         self.update_daten()
         self.aktualisiere_anzeige()
+        self.aktualisiere_status()
     
     def amplitude_geaendert(self, amplitude):
         """Wird aufgerufen, wenn die Amplitude geändert wird"""
         self.amplitude = amplitude
         self.update_daten()
         self.aktualisiere_anzeige()
+        self.aktualisiere_status()
         
         # Überprüfen, ob die Gesamtausgangsspannung im gültigen Bereich liegt
         self.validate_voltage_range()
@@ -291,9 +306,31 @@ class Funktionsgenerator(QMainWindow):
         self.offset = offset
         self.update_daten()
         self.aktualisiere_anzeige()
+        self.aktualisiere_status()
         
         # Überprüfen, ob die Gesamtausgangsspannung im gültigen Bereich liegt
         self.validate_voltage_range()
+    
+    def aktualisiere_status(self):
+        """Aktualisiert die Statusanzeige basierend auf den aktuellen Einstellungen"""
+        status_text = f"Status: "
+        
+        if self.ausgabe_aktiv:
+            status_text += f"Aktiv - {self.wellenform} {self.frequenz:.1f} Hz, {self.amplitude:.2f} V"
+            # Grünen Hintergrund für aktiven Status
+            self.status_label.setStyleSheet("font-weight: bold; color: white; background-color: #00aa00; padding: 8px;")
+        else:
+            status_text += f"Bereit - {self.wellenform} {self.frequenz:.1f} Hz, {self.amplitude:.2f} V"
+            # Dunklen Hintergrund für inaktiven Status
+            self.status_label.setStyleSheet("font-weight: bold; color: white; background-color: #2a2a2a; padding: 8px;")
+        
+        if self.offset != 0.0:
+            status_text += f", Offset {self.offset:.2f} V"
+            
+        if self.phase != 0.0:
+            status_text += f", Phase {self.phase:.0f}°"
+        
+        self.status_label.setText(status_text)
     
     def validate_voltage_range(self):
         """Überprüft, ob die Kombination aus Amplitude und Offset gültig ist"""
@@ -301,22 +338,26 @@ class Funktionsgenerator(QMainWindow):
         
         # Wenn das Signal den ±10V Bereich überschreiten könnte
         if max_signal > 10.0:
-            self.statusBar().showMessage(f"Warnung: Amplitude + |Offset| = {max_signal:.2f}V überschreitet den ±10V Bereich!", 3000)
+            warnung_text = f"Warnung: Amplitude + |Offset| = {max_signal:.2f}V überschreitet den ±10V Bereich!"
+            self.warnung_label.setText(warnung_text)
+            self.warnung_label.setStyleSheet("color: yellow; padding: 4px; background-color: #662200;")
             
-            # Ändere die Textfarbe im StatusBar, um die Warnung hervorzuheben
-            self.statusBar().setStyleSheet("color: yellow;")
+            # Timer, um die Warnung nach 3 Sekunden auszublenden
+            QTimer.singleShot(3000, self.warnung_zuruecksetzen)
         else:
-            # Normale Statusanzeige wiederherstellen
-            self.statusBar().setStyleSheet("")
-            
-            # Normalen Status wiederherstellen (nach 3 Sekunden)
-            QTimer.singleShot(3000, lambda: self.statusBar().showMessage(f"{self.wellenform} {self.frequenz:.1f} Hz, {self.amplitude:.2f} V"))
+            self.warnung_zuruecksetzen()
+    
+    def warnung_zuruecksetzen(self):
+        """Setzt die Warnungsanzeige zurück"""
+        self.warnung_label.setText("")
+        self.warnung_label.setStyleSheet("color: #2a2a2a; padding: 4px;")
     
     def phase_geaendert(self, phase):
         """Wird aufgerufen, wenn die Phase geändert wird"""
         self.phase = phase
         self.update_daten()
         self.aktualisiere_anzeige()
+        self.aktualisiere_status()
     
     def abtastrate_geaendert(self, abtastrate):
         """Wird aufgerufen, wenn die Abtastrate geändert wird"""
@@ -385,26 +426,32 @@ class Funktionsgenerator(QMainWindow):
         
         # X-Achse entsprechend der Frequenz anpassen
         self.wellenform_visual.setze_frequenz_anzeige(self.frequenz)
-        
-        # Statusbar-Info aktualisieren
-        status_text = f"{self.wellenform} {self.frequenz:.1f} Hz, {self.amplitude:.2f} V"
-        self.statusBar().showMessage(status_text)
     
-    def starten(self):
-        """Startet die Signalgenerierung"""
-        self.generierung_aktiv = True
+    def ausgabe_starten(self):
+        """Startet die Signalausgabe zum AD9833 DDS-Chip"""
+        self.ausgabe_aktiv = True
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         
         # Statusanzeige updaten
-        self.statusBar().showMessage("Generiere Signal: " + self.statusBar().currentMessage())
+        self.aktualisiere_status()
         
-        # Timer starten (für Animation, in echter Anwendung würde hier die AD9833-Steuerung gestartet)
+        # Hier würde die tatsächliche Kommunikation mit dem AD9833-Chip stattfinden
+        # Zum Beispiel über SPI oder I2C
+        
+        # Timer starten (für Animation)
         self.timer.start(100)
+        
+        # In einer echten Anwendung: Code, um dem DDS-Chip die Parameter zu senden
+        # Beispiel (Pseudo-Code):
+        # ad9833.send_waveform(self.wellenform)
+        # ad9833.send_frequency(self.frequenz)
+        # ad9833.send_phase(self.phase)
+        # ad9833.enable_output()
     
-    def stoppen(self):
-        """Stoppt die Signalgenerierung"""
-        self.generierung_aktiv = False
+    def ausgabe_stoppen(self):
+        """Stoppt die Signalausgabe"""
+        self.ausgabe_aktiv = False
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         
@@ -412,8 +459,11 @@ class Funktionsgenerator(QMainWindow):
         self.timer.stop()
         
         # Statusanzeige updaten
-        aktuelle_nachricht = self.statusBar().currentMessage()
-        self.statusBar().showMessage(aktuelle_nachricht.replace("Generiere Signal: ", ""))
+        self.aktualisiere_status()
+        
+        # In einer echten Anwendung: Code, um die DDS-Ausgabe zu stoppen
+        # Beispiel (Pseudo-Code):
+        # ad9833.disable_output()
     
     def hilfe_anzeigen(self):
         """Zeigt Hilfeinformationen an"""
@@ -425,8 +475,8 @@ class Funktionsgenerator(QMainWindow):
         Bedienung:
         1. Wählen Sie die gewünschte Wellenform (Sinus, Rechteck oder Dreieck)
         2. Stellen Sie Frequenz (bis zu 25 MHz), Amplitude, Offset und Phase ein
-        3. Drücken Sie 'Start', um die Generierung zu starten
-        4. Drücken Sie 'Stop', um die Generierung zu beenden
+        3. Drücken Sie 'Ausgabe starten', um das Signal zum AD9833-Chip zu senden
+        4. Drücken Sie 'Ausgabe stoppen', um die Signalausgabe zu beenden
         
         Spannungsbegrenzungen:
         - Die Kombination aus Amplitude und Offset sollte im Bereich von ±10V liegen
@@ -438,8 +488,8 @@ class Funktionsgenerator(QMainWindow):
         - Keine direkte Unterstützung für Sägezahnwellen
         - Frequenzbereich: 0.1 Hz bis 25 MHz
         
-        Hinweis: Die generierten digitalen Signale können über den AD9833 DDS-Chip
-        in analoge Signale umgewandelt werden.
+        Hinweis: Die generierten digitalen Signale werden über den AD9833 DDS-Chip
+        in analoge Signale umgewandelt.
         """
         
         QMessageBox.information(self, "Hilfe - Funktionsgenerator", hilfe_text)
