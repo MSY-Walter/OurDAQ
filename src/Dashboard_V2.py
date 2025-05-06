@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QPushButton,
                            QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, 
                            QGroupBox, QFrame, QSpacerItem, QSizePolicy,
                            QMessageBox)
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QPixmap, QFont, QPalette, QColor
 
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -104,6 +104,9 @@ class OurDAQDashboard(QMainWindow):
     def __init__(self):
         super().__init__()
         
+        # 设置窗口标志，禁用最大化按钮
+        self.setWindowFlags(Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
+        
         # Erstelle Ressourcenverzeichnisse, falls sie nicht existieren
         self.erstelle_ressourcen_verzeichnisse()
         
@@ -111,8 +114,10 @@ class OurDAQDashboard(QMainWindow):
         self.setWindowTitle("OurDAQ Dashboard")
         self.setGeometry(100, 100, 1000, 700)
         
-        # Fenstergröße fixieren - damit kann die Größe nicht mehr geändert werden
-        self.setFixedSize(1000, 700)
+        # 设置最小窗口大小
+        self._minimumSize = QSize(1000, 700)
+        # 设置建议的窗口大小（应大于最小大小）
+        self.resize(1000, 700)
         
         # Haupt-Widget und Layout
         zentral_widget = QWidget()
@@ -130,6 +135,23 @@ class OurDAQDashboard(QMainWindow):
         
         # Footer
         self.erstelle_footer(haupt_layout)
+    
+    def resizeEvent(self, event):
+        """重写resize事件，强制执行最小大小限制"""
+        current_width = event.size().width()
+        current_height = event.size().height()
+        min_width = self._minimumSize.width()
+        min_height = self._minimumSize.height()
+        
+        # 检查新的大小是否小于最小大小
+        if current_width < min_width or current_height < min_height:
+            # 如果是，将大小设置为最小大小
+            new_width = max(current_width, min_width)
+            new_height = max(current_height, min_height)
+            self.resize(new_width, new_height)
+        else:
+            # 否则调用正常的resize事件处理
+            super().resizeEvent(event)
     
     def erstelle_ressourcen_verzeichnisse(self):
         """Erstellt die Ressourcenverzeichnisse, falls sie noch nicht existieren"""
