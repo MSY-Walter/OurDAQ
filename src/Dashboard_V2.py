@@ -13,13 +13,11 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QPushButton,
                            QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, 
                            QGroupBox, QFrame, QSpacerItem, QSizePolicy,
                            QMessageBox)
-from PyQt5.QtCore import Qt, QSize
-from PyQt5.QtGui import QIcon, QPixmap, QFont, QPalette, QColor
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QPixmap, QFont, QPalette, QColor
 
-# 图像资源目录的路径 - 根据需要自定义
-# 获取应用程序根目录
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
-# 定义资源目录路径
+# Verzeichnisse für Ressourcen
 RESOURCES_DIR = os.path.join(APP_ROOT, "resources")
 IMAGES_DIR = os.path.join(RESOURCES_DIR, "images")
 ICONS_DIR = os.path.join(RESOURCES_DIR, "icons")
@@ -29,17 +27,17 @@ class ModuleCard(QFrame):
     
     def __init__(self, titel, beschreibung, icon_pfad=None, parent=None):
         super().__init__(parent)
-        self.setFrameShape(QFrame.StyledPanel)
-        self.setFrameShadow(QFrame.Raised)
+        self.setFrameShape(QFrame.NoFrame)  # Rahmenform entfernen
+        self.setFrameShadow(QFrame.Plain)   # Schatten entfernen
         self.setMinimumSize(280, 150)
         self.setMaximumSize(400, 220)
         
-        # Hintergrundfarbe und Rahmen
+        # Hintergrundfarbe und abgerundete Ecken, aber ohne Rahmen
         self.setAutoFillBackground(True)
         palette = self.palette()
         palette.setColor(QPalette.Window, QColor(240, 240, 240))
         self.setPalette(palette)
-        self.setStyleSheet("QFrame { border-radius: 8px; border: 1px solid #cccccc; }")
+        self.setStyleSheet("QFrame { border-radius: 8px; }")  # Rahmen entfernen, abgerundete Ecken beibehalten
         
         # Layout erstellen
         layout = QVBoxLayout(self)
@@ -52,7 +50,9 @@ class ModuleCard(QFrame):
         if icon_pfad and os.path.exists(icon_pfad):
             icon_label = QLabel()
             pixmap = QPixmap(icon_pfad)
-            icon_label.setPixmap(pixmap.scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            # Icongröße auf 64x64 Pixel erhöhen, um vollständige Anzeige zu gewährleisten
+            icon_label.setPixmap(pixmap.scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            icon_label.setFixedSize(48, 48)  # Feste Größe für das Label
             header_layout.addWidget(icon_label)
         
         # Titel hinzufügen
@@ -63,7 +63,7 @@ class ModuleCard(QFrame):
         
         layout.addLayout(header_layout)
         
-        # Separator-Linie
+        # Trennlinie
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
         separator.setFrameShadow(QFrame.Sunken)
@@ -98,7 +98,6 @@ class ModuleCard(QFrame):
         """)
         layout.addWidget(self.button)
 
-
 class OurDAQDashboard(QMainWindow):
     """Hauptfenster für das OurDAQ Dashboard"""
     
@@ -111,6 +110,9 @@ class OurDAQDashboard(QMainWindow):
         # Fenstereigenschaften festlegen
         self.setWindowTitle("OurDAQ Dashboard")
         self.setGeometry(100, 100, 1000, 700)
+        
+        # Fenstergröße fixieren - damit kann die Größe nicht mehr geändert werden
+        self.setFixedSize(1000, 700)
         
         # Haupt-Widget und Layout
         zentral_widget = QWidget()
@@ -199,9 +201,10 @@ class OurDAQDashboard(QMainWindow):
         module_gruppe = QGroupBox("Verfügbare Module")
         module_gruppe.setFont(QFont("Arial", 11, QFont.Bold))
         module_layout = QGridLayout(module_gruppe)
-        module_layout.setSpacing(20)
+        module_layout.setSpacing(20)  # Erhöhter Abstand zwischen Komponenten
+        module_layout.setContentsMargins(20, 30, 20, 20)  # Erhöhte Ränder
         
-        # Pfade zu den Modul-Icons im Ressourcenverzeichnis
+        # Pfade zu den Modul-Icons
         dmm_icon = os.path.join(ICONS_DIR, "dmm_icon.png")
         fgen_icon = os.path.join(ICONS_DIR, "fgen_icon.png")
         oscope_icon = os.path.join(ICONS_DIR, "oscope_icon.png")
@@ -227,23 +230,20 @@ class OurDAQDashboard(QMainWindow):
         fgen_card.button.clicked.connect(self.starte_funktionsgenerator)
         module_layout.addWidget(fgen_card, 0, 1)
         
-        # Oszilloskop (deaktiviert/in Entwicklung)
+        # Oszilloskop
         oscope_card = ModuleCard(
-            "Oszilloskop (in Entwicklung)",
+            "Oszilloskop",
             "Visualisieren Sie Signale in Echtzeit. "
-            "Dieses Modul ist noch in der Entwicklungsphase.",
+            "Mit Trigger-Funktionalität und CSV-Export für beide Kanäle.",
             oscope_icon if os.path.exists(oscope_icon) else None
         )
-        oscope_card.button.setText("Bald verfügbar")
-        oscope_card.button.setEnabled(False)
-        oscope_card.button.setStyleSheet("QPushButton { background-color: #999999; color: white; border-radius: 5px; padding: 8px; }")
+        oscope_card.button.clicked.connect(self.starte_oszilloskop)
         module_layout.addWidget(oscope_card, 1, 0)
         
-        # Kennlinienmessung (deaktiviert/in Entwicklung)
+        # Kennlinienmessung
         kennlinie_card = ModuleCard(
-            "Kennlinienmessung (in Entwicklung)",
-            "Messen und plotten Sie Kennlinien wie Dioden- oder Filterkennlinien. "
-            "Dieses Modul ist noch in der Entwicklungsphase.",
+            "Kennlinienmessung",
+            "Messen und plotten Sie Kennlinien wie Dioden- oder Filterkennlinien. ",
             kennlinie_icon if os.path.exists(kennlinie_icon) else None
         )
         kennlinie_card.button.setText("Bald verfügbar")
@@ -360,7 +360,27 @@ class OurDAQDashboard(QMainWindow):
                 self, "Fehler beim Starten", 
                 f"Beim Starten des Funktionsgenerators ist ein Fehler aufgetreten:\n{str(e)}"
             )
-    
+
+    def starte_oszilloskop(self):
+        """Startet das Oszilloskop"""
+        try:
+            # Pfad zum Oszilloskop_V2.py relativ zum aktuellen Verzeichnis
+            oscope_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Oszilloskop_V2.py")
+            
+            if os.path.exists(oscope_pfad):
+                # Starte das Oszilloskop-Modul als separaten Prozess
+                subprocess.Popen([sys.executable, oscope_pfad])
+            else:
+                QMessageBox.warning(
+                    self, "Datei nicht gefunden", 
+                    f"Die Datei Oszilloskop_V2.py wurde nicht gefunden.\nGesucht in: {oscope_pfad}"
+                )
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Fehler beim Starten", 
+                f"Beim Starten des Oszilloskops ist ein Fehler aufgetreten:\n{str(e)}"
+            )
+
     def zeige_hilfe(self):
         """Zeigt Hilfeinformationen an"""
         hilfe_text = """
