@@ -4,6 +4,11 @@
 
 Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdatenerfassungssystems (DAQ) basierend auf Raspberry Pi und Digilent MCC DAQ HATs ab. Das System bietet oszilloskop- und netzteilähnliche Funktionen und dient als Grundlage für ein studentisches Messtechniklabor.
 
+<img src="images/Dashboard.png" alt="OurDAQ Dashboard" height="300">
+<img src="images/DMM.png" alt="Digitales Multimeter" height="300">
+<img src="images/Funktionsgenerator.png" alt="Funktionsgenerator" height="300">
+<img src="images/Osziloskop.png" alt="Osziloskop" height="300">
+
 ## Hardwareanforderungen
 
 - `Raspberry Pi`
