@@ -101,6 +101,8 @@ Das System bietet folgende Standard-Messroutinen:
   - `Funktionsgenerator_V1.py`: Dashboard zu Erzeugung der Signale (Version 1)
   - `Funktionsgenerator_V2.py`: Dashboard zu Erzeugung der Signale (Version 2)
   - `Oszilloskop_V1.py`: Dashboard für Oszilloskop (Version 1)
+  - `Oszilloskop_V2.py`: Dashboard für Oszilloskop (Version 2)
+  - `Signal_Generator.py`: Datei zu Erzeugung der simulierte Signale
   - `Spannung_Strom_Generator.py`: Datei zu Erzeugung der simulierte Spannung und Strom
 - `.gitignore`: Bei commit ignorieren
 - `LICENSE`: MIT License
