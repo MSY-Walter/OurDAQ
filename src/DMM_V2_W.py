@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Digitaler Multimeter für MCC 118
-Korrigierter Code mit realen Messbereichen
+Korrigierter Code ohne QThread, um Thread-Konflikte zu vermeiden
 Mit Überlastungswarnung, Diagrammanzeige und CSV-Datenspeicherung
 """
 
@@ -649,4 +649,4 @@ if __name__ == "__main__":
     app.setStyle("Fusion")
     dmm = DigitalMultimeter()
     dmm.show()
-    sys.exit(app.exec_)
+    sys.exit(app.exec_())
