@@ -346,8 +346,8 @@ class OurDAQDashboard(QMainWindow):
     def starte_dmm(self):
         """Startet das Digitale Multimeter"""
         try:
-            # Pfad zum DMM_V2.py relativ zum aktuellen Verzeichnis
-            dmm_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "DMM_V2.py")
+            # Pfad zum DMM.py relativ zum aktuellen Verzeichnis
+            dmm_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "DMM.py")
             
             if os.path.exists(dmm_pfad):
                 # Starte das DMM-Modul als separaten Prozess
@@ -355,7 +355,7 @@ class OurDAQDashboard(QMainWindow):
             else:
                 QMessageBox.warning(
                     self, "Datei nicht gefunden", 
-                    f"Die Datei DMM_V2.py wurde nicht gefunden.\nGesucht in: {dmm_pfad}"
+                    f"Die Datei DMM.py wurde nicht gefunden.\nGesucht in: {dmm_pfad}"
                 )
         except Exception as e:
             QMessageBox.critical(
