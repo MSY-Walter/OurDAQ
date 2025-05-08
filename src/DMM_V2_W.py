@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Digitaler Multimeter für MCC 118
-Ein LabVIEW-ähnlicher DMM für Spannungsmessungen mit MCC 118
+Angepasst für gewünschte Messbereiche
 Mit Überlastungswarnung, Diagrammanzeige und CSV-Datenspeicherung
 """
 
@@ -17,17 +17,15 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QPushButton,
                            QFileDialog, QMessageBox)
 from PyQt5.QtCore import Qt, QTimer, pyqtSlot
 from PyQt5.QtGui import QPalette, QColor, QFont, QPainter, QPen, QBrush
-import pyqtgraph as pg  # Für die Diagrammanzeige
-from daqhats import mcc118, OptionFlags, HatIDs, HatError
+import pyqtgraph as pg
+from daqhats import mcc118, OptionFlags, HatError
 
 class MesswertAnzeige(QWidget):
-    """Widget zur Anzeige des aktuellen Messwerts mit LabVIEW-ähnlicher Darstellung"""
-    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.wert = 0.0
         self.einheit = "V DC"
-        self.bereich = 10.0  # MCC 118 max. ±10 V
+        self.bereich = 10.0
         self.ueberlast = False
         self.setMinimumHeight(120)
         self.setMinimumWidth(400)
@@ -96,8 +94,6 @@ class MesswertAnzeige(QWidget):
         qp.drawText(balken_x + balken_breite + 5, balken_y + balken_hoehe, "% FS")
 
 class BananaJackVisualisierung(QWidget):
-    """Visualisiert die Banana-Jack-Anschlüsse wie im Labview-Interface"""
-    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumSize(200, 120)
@@ -127,8 +123,6 @@ class BananaJackVisualisierung(QWidget):
         qp.drawText(self.width() - 70, 80, 40, 20, Qt.AlignCenter, "A")
 
 class DiagrammAnzeige(QWidget):
-    """Widget zur Anzeige eines zeitlichen Verlaufs der Messwerte"""
-    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumHeight(200)
@@ -138,7 +132,7 @@ class DiagrammAnzeige(QWidget):
         
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground('w')
-        self.plot_widget.setLabel('left', 'Spannung (V)')
+        self.plot_widget.setLabel('left', 'Wert')
         self.plot_widget.setLabel('bottom', 'Zeit (s)')
         self.plot_widget.showGrid(x=True, y=True)
         
@@ -187,8 +181,6 @@ class DiagrammAnzeige(QWidget):
         self.kurve.setData(self.x_daten, self.y_daten)
 
 class DigitalMultimeter(QMainWindow):
-    """Hauptfenster des Digitalen Multimeters"""
-    
     def __init__(self):
         super().__init__()
         
@@ -198,13 +190,12 @@ class DigitalMultimeter(QMainWindow):
         pg.setConfigOption('background', 'w')
         pg.setConfigOption('foreground', 'k')
         
-        # MCC 118 Initialisierung
         self.hat = None
         self.init_mcc118()
         
         self.modus = "Spannung DC"
-        self.bereich = 10.0  # MCC 118 max. ±10 V
-        self.channel = 0  # Standardmäßig Kanal 0
+        self.bereich = 10.0
+        self.channel = 0
         
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.aktualisiere_messung)
@@ -221,7 +212,6 @@ class DigitalMultimeter(QMainWindow):
         self.statusBar.showMessage("Bereit - Keine Datenaufnahme aktiv")
     
     def init_mcc118(self):
-        """Initialisiert das MCC 118 DAQ HAT"""
         try:
             self.hat = mcc118(0)
             print("MCC 118 erfolgreich initialisiert")
@@ -275,21 +265,23 @@ class DigitalMultimeter(QMainWindow):
         self.spannung_dc_btn.setStyleSheet(button_style)
         self.spannung_dc_btn.clicked.connect(lambda: self.setze_modus("Spannung DC"))
         
-        # AC und Strom deaktiviert, da MCC 118 nur DC Spannung misst
         self.spannung_ac_btn = QPushButton("AC Spannung (V)")
         self.spannung_ac_btn.setFixedSize(150, 45)
-        self.spannung_ac_btn.setEnabled(False)
+        self.spannung_ac_btn.setCheckable(True)
         self.spannung_ac_btn.setStyleSheet(button_style)
+        self.spannung_ac_btn.clicked.connect(lambda: self.setze_modus("Spannung AC"))
         
         self.strom_dc_btn = QPushButton("DC Strom (A)")
         self.strom_dc_btn.setFixedSize(150, 45)
-        self.strom_dc_btn.setEnabled(False)
+        self.strom_dc_btn.setCheckable(True)
         self.strom_dc_btn.setStyleSheet(button_style)
+        self.strom_dc_btn.clicked.connect(lambda: self.setze_modus("Strom DC"))
         
         self.strom_ac_btn = QPushButton("AC Strom (A)")
         self.strom_ac_btn.setFixedSize(150, 45)
-        self.strom_ac_btn.setEnabled(False)
+        self.strom_ac_btn.setCheckable(True)
         self.strom_ac_btn.setStyleSheet(button_style)
+        self.strom_ac_btn.clicked.connect(lambda: self.setze_modus("Strom AC"))
         
         button_grid.addWidget(self.spannung_dc_btn, 0, 0)
         button_grid.addWidget(self.spannung_ac_btn, 0, 1)
@@ -415,9 +407,15 @@ class DigitalMultimeter(QMainWindow):
         self.aktualisiere_bereiche()
         
         if "Spannung" in modus:
-            self.messwert_anzeige.set_einheit("V DC")
-        else:
-            self.messwert_anzeige.set_einheit("A DC")
+            if "DC" in modus:
+                self.messwert_anzeige.set_einheit("V DC")
+            else:
+                self.messwert_anzeige.set_einheit("V AC")
+        elif "Strom" in modus:
+            if "DC" in modus:
+                self.messwert_anzeige.set_einheit("A DC")
+            else:
+                self.messwert_anzeige.set_einheit("A AC")
         
         self.ueberlast_status = False
         
@@ -440,11 +438,17 @@ class DigitalMultimeter(QMainWindow):
         self.bereich_combo.clear()
         
         if "Spannung" in self.modus:
-            self.bereich_combo.addItems(["10V", "5V", "2V", "1V"])
-            self.bereich = 10.0
+            if "DC" in self.modus:
+                self.bereich_combo.addItems(["60V", "20V", "2V", "200mV"])
+            else:  # AC
+                self.bereich_combo.addItems(["20V", "2V", "200mV"])
+            self.bereich = 10.0  # Standardbereich (wird durch Hardware angepasst)
         elif "Strom" in self.modus:
-            self.bereich_combo.addItems(["1A", "500mA", "200mA", "100mA"])
-            self.bereich = 1.0
+            if "DC" in self.modus:
+                self.bereich_combo.addItems(["1A", "200mA", "20mA"])
+            else:  # AC
+                self.bereich_combo.addItems(["1A", "200mA", "20mA"])
+            self.bereich = 1.0  # Standardbereich (wird durch Hardware angepasst)
         
         self.bereich_geaendert()
     
@@ -452,7 +456,10 @@ class DigitalMultimeter(QMainWindow):
         bereich_text = self.bereich_combo.currentText()
         
         if "V" in bereich_text:
-            self.bereich = float(bereich_text.replace("V", ""))
+            if "mV" in bereich_text:
+                self.bereich = float(bereich_text.replace("mV", "")) / 1000.0
+            else:
+                self.bereich = float(bereich_text.replace("V", ""))
         elif "A" in bereich_text:
             if "mA" in bereich_text:
                 self.bereich = float(bereich_text.replace("mA", "")) / 1000.0
@@ -479,6 +486,15 @@ class DigitalMultimeter(QMainWindow):
     def aktualisiere_messung(self):
         try:
             wert = self.hat.a_in_read(self.channel, OptionFlags.DEFAULT)
+            
+            # Anpassung für höhere Spannungen (z. B. 60 V) mit Spannungsteiler
+            if self.bereich > 10.0 and "Spannung" in self.modus:
+                wert = wert * (self.bereich / 10.0)  # Annahme: Spannungsteiler skaliert auf 10 V
+            
+            # Platzhalter für Strommessung (benötigt Shunt-Widerstand)
+            if "Strom" in self.modus:
+                shunt_widerstand = 0.1  # Beispiel: 0.1 Ohm
+                wert = wert / shunt_widerstand  # Umrechnung Spannung zu Strom
             
             if abs(wert) > self.bereich:
                 if not self.ueberlast_status:
@@ -596,8 +612,8 @@ class DigitalMultimeter(QMainWindow):
         Digitaler Multimeter für MCC 118
         
         Bedienung:
-        1. Wählen Sie den Messmodus (derzeit nur DC Spannung)
-        2. Wählen Sie den Messbereich (10V, 5V, 2V, 1V)
+        1. Wählen Sie den Messmodus (DC Spannung, AC Spannung, DC Strom, AC Strom)
+        2. Wählen Sie den Messbereich (z. B. 60V, 20V, 1A, etc.)
         3. Wählen Sie den Kanal (Kanal 0 oder Kanal 1)
         4. Klicken Sie 'Aufnahme starten', um Messwerte aufzuzeichnen
         5. Klicken Sie 'Aufnahme stoppen', um die Aufzeichnung zu beenden
@@ -605,12 +621,13 @@ class DigitalMultimeter(QMainWindow):
         Diagramm und Datenerfassung:
         - Das Diagramm zeigt Messwerte nur bei aktiver Datenaufnahme
         - Bei Änderung von Modus, Bereich oder Kanal wird das Diagramm zurückgesetzt
-        - Mit 'CSV speichern' können Sie die Daten (Zeit, Wert, Modus, Kanal) speichern
+        - Mit 'CSV speichern' können Sie die Daten speichern
         
-        Hinweise: 
-        - Überlast wird angezeigt, wenn die Spannung den Messbereich überschreitet
-        - Der MCC 118 misst Spannungen bis ±10 V
-        - Strommessungen erfordern externe Hardware (Shunt-Widerstand)
+        Hinweise:
+        - MCC 118 misst direkt nur DC Spannung bis ±10 V
+        - Für 60 V: Spannungsteiler (z. B. 6:1) erforderlich
+        - Für AC: RMS-Detektor oder Signalverarbeitung nötig
+        - Für Strom: Shunt-Widerstand und Umrechnung erforderlich
         """
         
         QMessageBox.information(self, "Hilfe - Digitaler Multimeter", hilfe_text)
