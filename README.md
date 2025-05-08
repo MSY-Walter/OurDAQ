@@ -100,7 +100,7 @@ Das System bietet folgende Standard-Messroutinen:
   - `Dashboard_V2.py`: Hauptmenü (Version 2)
   - `Diodenkennlinie_V1.py`: Dashboard für Diodenkennlinie (Version 1)
   - `DMM_V1.py`: Dashboard für Multimeter (Version 1)
-  - `DMM_V2.py`: Dashboard für Multimeter (Version 2)
+  - `DMM_V2.py`: Dashboard für Multimeter mit echten Daten (Version 2)
   - `Filterkennlinie_V1.py`: Dashboard für Filterkennlinie (Version 1)
   - `Funktionsgenerator_V1.py`: Dashboard zu Erzeugung der Signale (Version 1)
   - `Funktionsgenerator_V2.py`: Dashboard zu Erzeugung der Signale (Version 2)
@@ -108,11 +108,10 @@ Das System bietet folgende Standard-Messroutinen:
   - `Oszilloskop_V1.py`: Dashboard für Oszilloskop (Version 1)
   - `Oszilloskop_V2.py`: Dashboard für Oszilloskop (Version 2)
   - `Signal_Generator.py`: Datei zu Erzeugung der simulierte Signale für Version 2
-  - `Spannung_Strom_Generator.py`: Datei zu Erzeugung der simulierte Spannung und Strom für Version 2
 - `.gitignore`: Bei commit ignorieren
 - `LICENSE`: MIT License
 - `README.md`: Diese Datei
-- `requirements.txt`: Python-Pakete
+- `requirements.txt`: Python-Paket
 
 ## Lizenz
 
