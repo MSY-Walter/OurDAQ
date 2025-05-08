@@ -366,8 +366,8 @@ class OurDAQDashboard(QMainWindow):
     def starte_funktionsgenerator(self):
         """Startet den Funktionsgenerator"""
         try:
-            # Pfad zum Funktionsgenerator_V2.py relativ zum aktuellen Verzeichnis
-            fgen_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Funktionsgenerator_V2.py")
+            # Pfad zum Funktionsgenerator.py relativ zum aktuellen Verzeichnis
+            fgen_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Funktionsgenerator.py")
             
             if os.path.exists(fgen_pfad):
                 # Starte den Funktionsgenerator als separaten Prozess
@@ -375,7 +375,7 @@ class OurDAQDashboard(QMainWindow):
             else:
                 QMessageBox.warning(
                     self, "Datei nicht gefunden", 
-                    f"Die Datei Funktionsgenerator_V2.py wurde nicht gefunden.\nGesucht in: {fgen_pfad}"
+                    f"Die Datei Funktionsgenerator.py wurde nicht gefunden.\nGesucht in: {fgen_pfad}"
                 )
         except Exception as e:
             QMessageBox.critical(
@@ -386,8 +386,8 @@ class OurDAQDashboard(QMainWindow):
     def starte_oszilloskop(self):
         """Startet das Oszilloskop"""
         try:
-            # Pfad zum Oszilloskop_V2.py relativ zum aktuellen Verzeichnis
-            oscope_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Oszilloskop_V2.py")
+            # Pfad zum Oszilloskop.py relativ zum aktuellen Verzeichnis
+            oscope_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Oszilloskop.py")
             
             if os.path.exists(oscope_pfad):
                 # Starte das Oszilloskop-Modul als separaten Prozess
@@ -395,7 +395,7 @@ class OurDAQDashboard(QMainWindow):
             else:
                 QMessageBox.warning(
                     self, "Datei nicht gefunden", 
-                    f"Die Datei Oszilloskop_V2.py wurde nicht gefunden.\nGesucht in: {oscope_pfad}"
+                    f"Die Datei Oszilloskop.py wurde nicht gefunden.\nGesucht in: {oscope_pfad}"
                 )
         except Exception as e:
             QMessageBox.critical(

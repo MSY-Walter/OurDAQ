@@ -3,6 +3,7 @@
 Digitaler Multimeter für MCC 118
 Ein LabVIEW-ähnlicher DMM für Spannungsmessungen mit MCC 118
 Mit Überlastungswarnung, Diagrammanzeige und CSV-Datenspeicherung
+Erweiterte Messbereich von 20V bis 200mV mit verbesserte Präzision
 """
 
 import sys
@@ -27,8 +28,9 @@ class MesswertAnzeige(QWidget):
         super().__init__(parent)
         self.wert = 0.0
         self.einheit = "V DC"
-        self.bereich = 10.0  # MCC 118 max. ±10 V
+        self.bereich = 20.0  # Erweitert auf 20V maximal
         self.ueberlast = False
+        self.dezimalstellen = 2  # Standard-Dezimalstellen
         self.setMinimumHeight(120)
         self.setMinimumWidth(400)
         
@@ -51,6 +53,15 @@ class MesswertAnzeige(QWidget):
     
     def set_bereich(self, bereich):
         self.bereich = bereich
+        # Dezimalstellen basierend auf dem Messbereich anpassen
+        if bereich >= 10.0:
+            self.dezimalstellen = 3
+        elif bereich >= 1.0:
+            self.dezimalstellen = 4
+        elif bereich >= 0.5:
+            self.dezimalstellen = 5
+        else:  # 200mV Bereich
+            self.dezimalstellen = 6
         self.update()
     
     def paintEvent(self, event):
@@ -66,7 +77,9 @@ class MesswertAnzeige(QWidget):
         if self.ueberlast:
             text = "ÜBERLAST!"
         else:
-            text = f"{self.wert:.2f} {self.einheit}"
+            # Formatierung mit der entsprechenden Anzahl von Dezimalstellen
+            format_string = f"{{:.{self.dezimalstellen}f}} {self.einheit}"
+            text = format_string.format(self.wert)
             
         qp.drawText(self.rect(), Qt.AlignCenter, text)
         
@@ -203,7 +216,7 @@ class DigitalMultimeter(QMainWindow):
         self.init_mcc118()
         
         self.modus = "Spannung DC"
-        self.bereich = 10.0  # MCC 118 max. ±10 V
+        self.bereich = 20.0  # Neuer Maximalbereich von 20V
         self.channel = 0  # Standardmäßig Kanal 0
         
         self.timer = QTimer(self)
@@ -317,7 +330,7 @@ class DigitalMultimeter(QMainWindow):
         bereich_layout.addWidget(kanal_label)
         
         self.kanal_combo = QComboBox()
-        self.kanal_combo.addItems(["Kanal 0", "Kanal 1"])
+        self.kanal_combo.addItems(["Kanal 0", "Kanal 1", "Kanal 2", "Kanal 3", "Kanal 4", "Kanal 5", "Kanal 6", "Kanal 7"])
         self.kanal_combo.setFixedHeight(30)
         self.kanal_combo.setStyleSheet("font-size: 10pt;")
         self.kanal_combo.currentIndexChanged.connect(self.kanal_geaendert)
@@ -440,8 +453,9 @@ class DigitalMultimeter(QMainWindow):
         self.bereich_combo.clear()
         
         if "Spannung" in self.modus:
-            self.bereich_combo.addItems(["10V", "5V", "2V", "1V"])
-            self.bereich = 10.0
+            # Neue LabVIEW-ähnliche Messbereiche von 20V bis 200mV
+            self.bereich_combo.addItems(["20V", "10V", "2V", "1V", "500mV", "200mV"])
+            self.bereich = 20.0
         elif "Strom" in self.modus:
             self.bereich_combo.addItems(["1A", "500mA", "200mA", "100mA"])
             self.bereich = 1.0
@@ -452,7 +466,10 @@ class DigitalMultimeter(QMainWindow):
         bereich_text = self.bereich_combo.currentText()
         
         if "V" in bereich_text:
-            self.bereich = float(bereich_text.replace("V", ""))
+            if "mV" in bereich_text:
+                self.bereich = float(bereich_text.replace("mV", "")) / 1000.0
+            else:
+                self.bereich = float(bereich_text.replace("V", ""))
         elif "A" in bereich_text:
             if "mA" in bereich_text:
                 self.bereich = float(bereich_text.replace("mA", "")) / 1000.0
@@ -469,7 +486,7 @@ class DigitalMultimeter(QMainWindow):
     
     def kanal_geaendert(self):
         kanal_text = self.kanal_combo.currentText()
-        self.channel = 0 if kanal_text == "Kanal 0" else 1
+        self.channel = int(kanal_text.replace("Kanal ", ""))
         self.diagramm_anzeige.reset_diagramm()
         self.messdaten = []
         if self.datenerfassung_aktiv:
@@ -505,7 +522,8 @@ class DigitalMultimeter(QMainWindow):
                     'Zeit': zeit,
                     'Wert': wert,
                     'Modus': self.modus,
-                    'Kanal': self.channel
+                    'Kanal': self.channel,
+                    'Bereich': self.bereich
                 })
                 
                 if len(self.messdaten) % 10 == 0:
@@ -577,7 +595,7 @@ class DigitalMultimeter(QMainWindow):
         if dateiname:
             try:
                 with open(dateiname, 'w', newline='') as csvfile:
-                    feldnamen = ['Zeit', 'Wert', 'Modus', 'Kanal']
+                    feldnamen = ['Zeit', 'Wert', 'Modus', 'Kanal', 'Bereich']
                     writer = csv.DictWriter(csvfile, fieldnames=feldnamen)
                     
                     writer.writeheader()
@@ -597,24 +615,23 @@ class DigitalMultimeter(QMainWindow):
         
         Bedienung:
         1. Wählen Sie den Messmodus (derzeit nur DC Spannung)
-        2. Wählen Sie den Messbereich (10V, 5V, 2V, 1V)
-        3. Wählen Sie den Kanal (Kanal 0 oder Kanal 1)
+        2. Wählen Sie den Messbereich (20V, 10V, 2V, 1V, 500mV, 200mV)
+        3. Wählen Sie den Kanal (Kanal 0 bis Kanal 7)
         4. Klicken Sie 'Aufnahme starten', um Messwerte aufzuzeichnen
         5. Klicken Sie 'Aufnahme stoppen', um die Aufzeichnung zu beenden
         
         Diagramm und Datenerfassung:
         - Das Diagramm zeigt Messwerte nur bei aktiver Datenaufnahme
         - Bei Änderung von Modus, Bereich oder Kanal wird das Diagramm zurückgesetzt
-        - Mit 'CSV speichern' können Sie die Daten (Zeit, Wert, Modus, Kanal) speichern
+        - Mit 'CSV speichern' können Sie die Daten (Zeit, Wert, Modus, Kanal, Bereich) speichern
         
         Hinweise: 
         - Überlast wird angezeigt, wenn die Spannung den Messbereich überschreitet
-        - Der MCC 118 misst Spannungen bis ±10 V
+        - Der MCC 118 misst Spannungen bis ±10 V, aber die Software wurde erweitert, um bis zu 20V anzuzeigen
+        - Die Anzahl der Dezimalstellen passt sich automatisch an den Messbereich an
         - Strommessungen erfordern externe Hardware (Shunt-Widerstand)
         """
         
-        QMessageBox.information(self, "Hilfe - Digitaler Multimeter", hilfe_text)
-    
     def closeEvent(self, event):
         self.stoppe_aufnahme()
         if self.hat:

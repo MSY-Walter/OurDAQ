@@ -78,7 +78,7 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
 5. Python Programm starten
 
    ```bash
-   python3 src/Dashboard_V2.py
+   python3 src/Dashboard.py
    ```
 
 ## Verwendung
