@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Digitaler Multimeter für MCC 118
-Korrigierter Code ohne QThread, um Thread-Konflikte zu vermeiden
+Korrigierter Code mit Statusmeldung für Shunt-Warnung
 Mit Überlastungswarnung, Diagrammanzeige und CSV-Datenspeicherung
 """
 
@@ -204,6 +204,7 @@ class DigitalMultimeter(QMainWindow):
         self.ueberlast_status = False
         self.messdaten = []
         self.datenerfassung_aktiv = False
+        self.shunt_warning_shown = False  # Neue Variable für Shunt-Warnung
         
         self.setup_ui()
         
@@ -418,6 +419,7 @@ class DigitalMultimeter(QMainWindow):
                 self.messwert_anzeige.set_einheit("A AC")
         
         self.ueberlast_status = False
+        self.shunt_warning_shown = False  # Zurücksetzen der Warnung
         
         if self.datenerfassung_aktiv:
             self.diagramm_anzeige.reset_diagramm()
@@ -496,10 +498,11 @@ class DigitalMultimeter(QMainWindow):
             
             # Strommessung
             if "Strom" in self.modus:
-                shunt_widerstand = 0.1  # Passe diesen Wert an deinen Shunt-Widerstand an (in Ohm)
-                if shunt_widerstand == 0.1:  # Warnung, falls Standardwert nicht geändert wurde
-                    QMessageBox.warning(self, "Shunt-Widerstand", "Bitte Shunt-Widerstandswert im Skript anpassen!")
-                wert = wert / shunt_widerstand  # Umrechnung Spannung zu Strom
+                shunt_widerstand = 0.1
+                if shunt_widerstand == 0.1 and not self.shunt_warning_shown:
+                    self.statusBar.showMessage("Warnung: Bitte Shunt-Widerstandswert im Skript anpassen!", 5000)
+                    self.shunt_warning_shown = True
+                wert = wert / shunt_widerstand
             
             if abs(wert) > self.bereich:
                 if not self.ueberlast_status:
