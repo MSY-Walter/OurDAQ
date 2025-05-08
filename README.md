@@ -96,18 +96,14 @@ Das System bietet folgende Standard-Messroutinen:
 - `docs/`: Dokumentation
 - `src/`: Quellcode-Verzeichnis
   - `resources/`: Quelle von images und icons
-  - `Dashboard_V1.py`: Hauptmenü (Version 1)
-  - `Dashboard_V2.py`: Hauptmenü (Version 2)
-  - `Diodenkennlinie_V1.py`: Dashboard für Diodenkennlinie (Version 1)
-  - `DMM_V1.py`: Dashboard für Multimeter (Version 1)
-  - `DMM_V2.py`: Dashboard für Multimeter mit echten Daten (Version 2)
-  - `Filterkennlinie_V1.py`: Dashboard für Filterkennlinie (Version 1)
-  - `Funktionsgenerator_V1.py`: Dashboard zu Erzeugung der Signale (Version 1)
-  - `Funktionsgenerator_V2.py`: Dashboard zu Erzeugung der Signale (Version 2)
-  - `Netzteil_V2.py`: Dashboard für Netzteil (Version 2)
-  - `Oszilloskop_V1.py`: Dashboard für Oszilloskop (Version 1)
-  - `Oszilloskop_V2.py`: Dashboard für Oszilloskop (Version 2)
-  - `Signal_Generator.py`: Datei zu Erzeugung der simulierte Signale für Version 2
+  - `Dashboard.py`: Hauptmenü
+  - `Diodenkennlinie.py`: Dashboard für Diodenkennlinie
+  - `DMM.py`: Dashboard für Multimeter
+  - `Filterkennlinie_V1.py`: Dashboard für Filterkennlinie
+  - `Funktionsgenerator.py`: Dashboard zu Erzeugung der Signale
+  - `Netzteil.py`: Dashboard für Netzteil
+  - `Oszilloskop.py`: Dashboard für Oszilloskop
+  - `Signal_Generator.py`: Datei zu Erzeugung der simulierte Signale
 - `.gitignore`: Bei commit ignorieren
 - `LICENSE`: MIT License
 - `README.md`: Diese Datei
