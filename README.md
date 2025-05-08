@@ -43,7 +43,6 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
 2. Repository klonen:
 
    ```bash
-   cd Workspace
    git clone https://github.com/MSY-Walter/OurDAQ.git
    ```
 
@@ -52,7 +51,7 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
 1. Virtuelle Umgebung erstellen:
 
    ```bash
-   cd Projektarbeit
+   cd OurDAQ
    python3 -m venv .venv
    ```
 
@@ -70,10 +69,10 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
    uv pip install -r requirements.txt
    ```
 
-4. Link von der virtuellen Umgebung zum PyQt5-Systempaket erstellen, z.B.: (Hinweis: "sebastian" und "python3.11" muss angepasst werden, wie "user" und "pythonx.xx")
+4. Link von der virtuellen Umgebung zum PyQt5-Systempaket erstellen, z.B.: (Hinweis: "sebastian" und "python3.11" muss angepasst werden, wie "user" und "python3.xx")
 
    ```bash
-   ln -s /usr/lib/python3/dist-packages/PyQt5 /home/sebastian/Workspace/OurDAQ/.venv/lib/python3.11/site-packages/
+   ln -s /usr/lib/python3/dist-packages/PyQt5 /home/sebastian/OurDAQ/.venv/lib/python3.11/site-packages/
    ```
 
 5. Python Programm starten
@@ -97,18 +96,19 @@ Das System bietet folgende Standard-Messroutinen:
 - `docs/`: Dokumentation
 - `src/`: Quellcode-Verzeichnis
   - `resources/`: Quelle von images und icons
-  - `Dashboard_V1.py`: Dashboard für alle Funktionalität (Version 1)
-  - `Dashboard_V2.py`: Dashboard für alle Funktionalität (Version 2)
+  - `Dashboard_V1.py`: Hauptmenü (Version 1)
+  - `Dashboard_V2.py`: Hauptmenü (Version 2)
   - `Diodenkennlinie_V1.py`: Dashboard für Diodenkennlinie (Version 1)
   - `DMM_V1.py`: Dashboard für Multimeter (Version 1)
   - `DMM_V2.py`: Dashboard für Multimeter (Version 2)
   - `Filterkennlinie_V1.py`: Dashboard für Filterkennlinie (Version 1)
   - `Funktionsgenerator_V1.py`: Dashboard zu Erzeugung der Signale (Version 1)
   - `Funktionsgenerator_V2.py`: Dashboard zu Erzeugung der Signale (Version 2)
+  - `Netzteil_V2.py`: Dashboard für Netzteil (Version 2)
   - `Oszilloskop_V1.py`: Dashboard für Oszilloskop (Version 1)
   - `Oszilloskop_V2.py`: Dashboard für Oszilloskop (Version 2)
-  - `Signal_Generator.py`: Datei zu Erzeugung der simulierte Signale
-  - `Spannung_Strom_Generator.py`: Datei zu Erzeugung der simulierte Spannung und Strom
+  - `Signal_Generator.py`: Datei zu Erzeugung der simulierte Signale für Version 2
+  - `Spannung_Strom_Generator.py`: Datei zu Erzeugung der simulierte Spannung und Strom für Version 2
 - `.gitignore`: Bei commit ignorieren
 - `LICENSE`: MIT License
 - `README.md`: Diese Datei
