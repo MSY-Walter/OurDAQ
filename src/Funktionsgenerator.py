@@ -83,7 +83,7 @@ class Funktionsgenerator(QMainWindow):
         super().__init__()
         
         # Fenstereigenschaften festlegen
-        self.setWindowTitle("Funktionsgenerator für AD9833")
+        self.setWindowTitle("OurDAQ - Funktionsgenerator")
         self.setGeometry(100, 100, 900, 700)  # Vergrößerte Startgröße
         
         # Signalgeneratorparameter

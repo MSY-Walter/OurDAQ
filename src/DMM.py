@@ -205,7 +205,7 @@ class DigitalMultimeter(QMainWindow):
     def __init__(self):
         super().__init__()
         
-        self.setWindowTitle("Digital Multimeter")
+        self.setWindowTitle("OurDAQ - Digitalmultimeter")
         self.setGeometry(100, 100, 800, 700)
         
         pg.setConfigOption('background', 'w')

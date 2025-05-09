@@ -183,7 +183,7 @@ class Netzteil(QMainWindow):
         super().__init__()
         
         # Fenstereigenschaften festlegen
-        self.setWindowTitle("Netzteil - DC Stromversorgung")
+        self.setWindowTitle("OurDAQ - Netzteil")
         self.setGeometry(100, 100, 900, 700)
         
         # Für PyQtGraph dunkles Hintergrundthema verwenden

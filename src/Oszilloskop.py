@@ -112,7 +112,7 @@ class Oszilloskop(QMainWindow):
         super().__init__()
         
         # Fenstereigenschaften festlegen
-        self.setWindowTitle("Oszilloskop")
+        self.setWindowTitle("OurDAQ - Oszilloskop")
         self.setGeometry(100, 100, 1000, 800)  # Größeres Fenster für mehr Details
         
         # Stelle sicher, dass PyQtGraph dunkles Hintergrundthema verwendet
