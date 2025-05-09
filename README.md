@@ -98,8 +98,8 @@ Das System bietet folgende Standard-Messroutinen:
   - `resources/`: Quelle von images und icons
   - `Dashboard.py`: Hauptmenü
   - `Diodenkennlinie.py`: Dashboard für Diodenkennlinie
-  - `DMM.py`: Dashboard für Multimeter
-  - `Filterkennlinie_V1.py`: Dashboard für Filterkennlinie
+  - `DMM.py`: Dashboard für Digitalmultimeter
+  - `Filterkennlinie.py`: Dashboard für Filterkennlinie
   - `Funktionsgenerator.py`: Dashboard zu Erzeugung der Signale
   - `Netzteil.py`: Dashboard für Netzteil
   - `Oszilloskop.py`: Dashboard für Oszilloskop

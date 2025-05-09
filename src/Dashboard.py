@@ -2,8 +2,6 @@
 
 """
 Dashboard für das Datenerfassungssystem auf Raspberry Pi
-Verbindet die verschiedenen Module des OurDAQ-Systems in einer zentralen Oberfläche
-Mit Zugriff auf Digitales Multimeter und Funktionsgenerator
 """
 
 import sys
@@ -104,7 +102,7 @@ class OurDAQDashboard(QMainWindow):
     def __init__(self):
         super().__init__()
         
-        # 设置窗口标志，禁用最大化按钮
+        # Setze das Farbschema auf hell
         self.setWindowFlags(Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
         
         # Erstelle Ressourcenverzeichnisse, falls sie nicht existieren
@@ -114,9 +112,8 @@ class OurDAQDashboard(QMainWindow):
         self.setWindowTitle("OurDAQ Dashboard")
         self.setGeometry(100, 100, 1000, 700)
         
-        # 设置最小窗口大小
+        # Setze die minimale Größe des Fensters
         self._minimumSize = QSize(1000, 700)
-        # 设置建议的窗口大小（应大于最小大小）
         self.resize(1000, 700)
         
         # Haupt-Widget und Layout
@@ -137,20 +134,19 @@ class OurDAQDashboard(QMainWindow):
         self.erstelle_footer(haupt_layout)
     
     def resizeEvent(self, event):
-        """重写resize事件，强制执行最小大小限制"""
         current_width = event.size().width()
         current_height = event.size().height()
         min_width = self._minimumSize.width()
         min_height = self._minimumSize.height()
         
-        # 检查新的大小是否小于最小大小
+        # Überprüfen, ob die aktuelle Größe kleiner ist als die minimale Größe
         if current_width < min_width or current_height < min_height:
-            # 如果是，将大小设置为最小大小
+            # Wenn ja, setze die Größe auf die minimale Größe
             new_width = max(current_width, min_width)
             new_height = max(current_height, min_height)
             self.resize(new_width, new_height)
         else:
-            # 否则调用正常的resize事件处理
+            # Andernfalls, setze die Größe auf die aktuelle Größe
             super().resizeEvent(event)
     
     def erstelle_ressourcen_verzeichnisse(self):
@@ -173,7 +169,7 @@ class OurDAQDashboard(QMainWindow):
         # OurDAQ Logo erstellen und hinzufügen
         logo_label = QLabel()
         # Pfad zum Logo im Ressourcenverzeichnis
-        logo_pfad = os.path.join(IMAGES_DIR, "OurDAQ_logo.png")
+        logo_pfad = os.path.join(IMAGES_DIR, "ourdaq_logo.png")
         
         # Fallback: Wenn das Logo nicht gefunden wird, erstellen wir ein Text-basiertes Logo
         if os.path.exists(logo_pfad):
@@ -207,7 +203,7 @@ class OurDAQDashboard(QMainWindow):
         
         # Beschreibung
         beschreibung_label = QLabel(
-            "Ein prototypisches Messdatenerfassungssystem basierend auf Raspberry Pi und Digilent MCC DAQ HATs."
+            "Ein prototypisches Messdatenerfassungssystem basierend auf Raspberry Pi und Digilent MCC DAQ HAT 118."
         )
         beschreibung_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         beschreibung_label.setWordWrap(True)
@@ -228,50 +224,69 @@ class OurDAQDashboard(QMainWindow):
         
         # Pfade zu den Modul-Icons
         dmm_icon = os.path.join(ICONS_DIR, "dmm_icon.png")
-        fgen_icon = os.path.join(ICONS_DIR, "fgen_icon.png")
-        oscope_icon = os.path.join(ICONS_DIR, "oscope_icon.png")
-        kennlinie_icon = os.path.join(ICONS_DIR, "kennlinie_icon.png")
+        funktionsgenerator_icon = os.path.join(ICONS_DIR, "funktionsgenerator_icon.png")
+        oszilloskop_icon = os.path.join(ICONS_DIR, "oszilloskop_icon.png")
+        netzteil_icon = os.path.join(ICONS_DIR, "netzteil_icon.png")
+        diode_icon = os.path.join(ICONS_DIR, "diode_icon.png")
+        filter_icon = os.path.join(ICONS_DIR, "filter_icon.png")
         
-        # Digitales Multimeter
+        # Digitalmultimeter
         dmm_card = ModuleCard(
-            "Digitales Multimeter",
-            "Messen Sie Spannung und Strom mit diesem digitalen Multimeter. "
-            "Mit Überlastungswarnung, Diagrammanzeige und CSV-Datenspeicherung.",
+            "Digitalmultimeter",
+            "Messen Sie hier Spannung und Strom",
             dmm_icon if os.path.exists(dmm_icon) else None
         )
         dmm_card.button.clicked.connect(self.starte_dmm)
         module_layout.addWidget(dmm_card, 0, 0)
         
         # Funktionsgenerator
-        fgen_card = ModuleCard(
+        funktionsgenerator_card = ModuleCard(
             "Funktionsgenerator",
-            "Erzeugen Sie verschiedene Signalformen (Sinus, Rechteck, Dreieck) "
-            "mit einstellbarer Frequenz, Amplitude und Offset.",
-            fgen_icon if os.path.exists(fgen_icon) else None
+            "Erzeugen Sie hier verschiedene Signalformen",
+            funktionsgenerator_icon if os.path.exists(funktionsgenerator_icon) else None
         )
-        fgen_card.button.clicked.connect(self.starte_funktionsgenerator)
-        module_layout.addWidget(fgen_card, 0, 1)
+        funktionsgenerator_card.button.clicked.connect(self.starte_funktionsgenerator)
+        module_layout.addWidget(funktionsgenerator_card, 0, 1)
         
         # Oszilloskop
-        oscope_card = ModuleCard(
+        oszilloskop_card = ModuleCard(
             "Oszilloskop",
-            "Visualisieren Sie Signale in Echtzeit. "
-            "Mit Trigger-Funktionalität und CSV-Export für beide Kanäle.",
-            oscope_icon if os.path.exists(oscope_icon) else None
+            "Visualisieren Sie hier Signale in 2 Kanälen",
+            oszilloskop_icon if os.path.exists(oszilloskop_icon) else None
         )
-        oscope_card.button.clicked.connect(self.starte_oszilloskop)
-        module_layout.addWidget(oscope_card, 1, 0)
+        oszilloskop_card.button.clicked.connect(self.starte_oszilloskop)
+        module_layout.addWidget(oszilloskop_card, 1, 0)
         
-        # Kennlinienmessung
-        kennlinie_card = ModuleCard(
-            "Kennlinienmessung",
-            "Messen und plotten Sie Kennlinien wie Dioden- oder Filterkennlinien. ",
-            kennlinie_icon if os.path.exists(kennlinie_icon) else None
+        # Netzteil (anstatt Kennlinienmessung)
+        netzteil_card = ModuleCard(
+            "Netzteil",
+            "Stellen Sie hier einstellbare Spannungen ein",
+            netzteil_icon if os.path.exists(netzteil_icon) else None
         )
-        kennlinie_card.button.setText("Bald verfügbar")
-        kennlinie_card.button.setEnabled(False)
-        kennlinie_card.button.setStyleSheet("QPushButton { background-color: #999999; color: white; border-radius: 5px; padding: 8px; }")
-        module_layout.addWidget(kennlinie_card, 1, 1)
+        netzteil_card.button.clicked.connect(self.starte_netzteil)
+        module_layout.addWidget(netzteil_card, 1, 1)
+        
+        # Diodenkennlinie - in Entwicklung
+        diode_card = ModuleCard(
+            "Diodenkennlinie",
+            "Analysieren Sie hier die Diodenkennlinie",
+            diode_icon if os.path.exists(diode_icon) else None
+        )
+        diode_card.button.setText("Bald verfügbar")
+        diode_card.button.setEnabled(False)
+        diode_card.button.setStyleSheet("QPushButton { background-color: #999999; color: white; border-radius: 5px; padding: 8px; }")
+        module_layout.addWidget(diode_card, 2, 0)
+        
+        # Filterkennlinie - in Entwicklung
+        filter_card = ModuleCard(
+            "Filterkennlinie",
+            "Analysieren Sie hier die Filterkennlinie",
+            filter_icon if os.path.exists(filter_icon) else None
+        )
+        filter_card.button.setText("Bald verfügbar")
+        filter_card.button.setEnabled(False)
+        filter_card.button.setStyleSheet("QPushButton { background-color: #999999; color: white; border-radius: 5px; padding: 8px; }")
+        module_layout.addWidget(filter_card, 2, 1)
         
         haupt_layout.addWidget(module_gruppe)
     
@@ -299,7 +314,7 @@ class OurDAQDashboard(QMainWindow):
         
         # OHM Logo hinzufügen
         ohm_logo_label = QLabel()
-        ohm_logo_pfad = os.path.join(IMAGES_DIR, "OHM_logo.png")
+        ohm_logo_pfad = os.path.join(IMAGES_DIR, "ohm_logo.png")
         
         if os.path.exists(ohm_logo_pfad):
             pixmap = QPixmap(ohm_logo_pfad)
@@ -314,7 +329,7 @@ class OurDAQDashboard(QMainWindow):
             print(f"Verwende Text-Label als Fallback.")
         
         # Hinweis-Label
-        hinweis_label = QLabel("OurDAQ Version 2.0 - Technische Hochschule Nürnberg")
+        hinweis_label = QLabel("OurDAQ Version 1.0 - Technische Hochschule Nürnberg")
         hinweis_label.setAlignment(Qt.AlignCenter)
         
         # Layout aufbauen
@@ -367,15 +382,15 @@ class OurDAQDashboard(QMainWindow):
         """Startet den Funktionsgenerator"""
         try:
             # Pfad zum Funktionsgenerator.py relativ zum aktuellen Verzeichnis
-            fgen_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Funktionsgenerator.py")
+            funktionsgenerator_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Funktionsgenerator.py")
             
-            if os.path.exists(fgen_pfad):
+            if os.path.exists(funktionsgenerator_pfad):
                 # Starte den Funktionsgenerator als separaten Prozess
-                subprocess.Popen([sys.executable, fgen_pfad])
+                subprocess.Popen([sys.executable, funktionsgenerator_pfad])
             else:
                 QMessageBox.warning(
                     self, "Datei nicht gefunden", 
-                    f"Die Datei Funktionsgenerator.py wurde nicht gefunden.\nGesucht in: {fgen_pfad}"
+                    f"Die Datei Funktionsgenerator.py wurde nicht gefunden.\nGesucht in: {funktionsgenerator_pfad}"
                 )
         except Exception as e:
             QMessageBox.critical(
@@ -387,20 +402,40 @@ class OurDAQDashboard(QMainWindow):
         """Startet das Oszilloskop"""
         try:
             # Pfad zum Oszilloskop.py relativ zum aktuellen Verzeichnis
-            oscope_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Oszilloskop.py")
+            oszilloskop_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Oszilloskop.py")
             
-            if os.path.exists(oscope_pfad):
+            if os.path.exists(oszilloskop_pfad):
                 # Starte das Oszilloskop-Modul als separaten Prozess
-                subprocess.Popen([sys.executable, oscope_pfad])
+                subprocess.Popen([sys.executable, oszilloskop_pfad])
             else:
                 QMessageBox.warning(
                     self, "Datei nicht gefunden", 
-                    f"Die Datei Oszilloskop.py wurde nicht gefunden.\nGesucht in: {oscope_pfad}"
+                    f"Die Datei Oszilloskop.py wurde nicht gefunden.\nGesucht in: {oszilloskop_pfad}"
                 )
         except Exception as e:
             QMessageBox.critical(
                 self, "Fehler beim Starten", 
                 f"Beim Starten des Oszilloskops ist ein Fehler aufgetreten:\n{str(e)}"
+            )
+    
+    def starte_netzteil(self):
+        """Startet das Netzteil"""
+        try:
+            # Pfad zum Netzteil.py relativ zum aktuellen Verzeichnis
+            netzteil_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Netzteil.py")
+            
+            if os.path.exists(netzteil_pfad):
+                # Starte das Netzteil-Modul als separaten Prozess
+                subprocess.Popen([sys.executable, netzteil_pfad])
+            else:
+                QMessageBox.warning(
+                    self, "Datei nicht gefunden", 
+                    f"Die Datei Netzteil.py wurde nicht gefunden.\nGesucht in: {netzteil_pfad}"
+                )
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Fehler beim Starten", 
+                f"Beim Starten des Netzteils ist ein Fehler aufgetreten:\n{str(e)}"
             )
 
     def zeige_hilfe(self):
@@ -413,7 +448,7 @@ class OurDAQDashboard(QMainWindow):
         
         Verfügbare Module:
         
-        1. Digitales Multimeter
+        1. Digitalmultimeter
            - Messen von Spannung und Strom
            - Anzeige von Messwerten in Diagrammen
            - Speichern von Messdaten als CSV
@@ -423,10 +458,17 @@ class OurDAQDashboard(QMainWindow):
            - Einstellbare Frequenz, Amplitude und Offset
            - Optimiert für den AD9833 DDS-Chip
         
-        Weitere Module (Oszilloskop, Kennlinienmessung) sind derzeit
-        in Entwicklung und werden in zukünftigen Versionen verfügbar sein.
+        3. Oszilloskop
+           - Visualisierung von Signalen in 2 Kanälen
+           - Trigger-Funktionalität und Zeitbasis-Einstellung
+           - CSV-Export der Messdaten
         
-        Bei Fragen oder Problemen wenden Sie sich bitte an die Projektbetreuer.
+        4. Netzteil
+           - Einstellbar Spannungen
+           - Überlastschutz und Überwachung
+        
+        Weitere Module (Diodenkennlinie, Filterkennlinie) sind derzeit
+        in Entwicklung und werden in zukünftigen Versionen verfügbar sein.
         """
         
         QMessageBox.information(self, "OurDAQ Dashboard - Hilfe", hilfe_text)
