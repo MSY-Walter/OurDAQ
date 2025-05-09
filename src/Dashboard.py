@@ -203,7 +203,7 @@ class OurDAQDashboard(QMainWindow):
         
         # Beschreibung
         beschreibung_label = QLabel(
-            "Ein prototypisches Messdatenerfassungssystem basierend auf Raspberry Pi und Digilent MCC DAQ HAT 118."
+            "Ein prototypisches Messdatenerfassungssystem basierend auf Raspberry Pi und Digilent MCC DAQ HAT 118"
         )
         beschreibung_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         beschreibung_label.setWordWrap(True)

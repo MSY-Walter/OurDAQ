@@ -2,7 +2,7 @@
 
 ## Projektbeschreibung
 
-Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdatenerfassungssystems (DAQ) basierend auf Raspberry Pi und Digilent MCC DAQ HATs ab. Das System bietet oszilloskop- und netzteilähnliche Funktionen und dient als Grundlage für ein studentisches Messtechniklabor.
+Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdatenerfassungssystems (DAQ) basierend auf `Raspberry Pi` und `Digilent MCC DAQ HAT MCC 118` ab. Das System dient als Grundlage für ein studentisches Messtechniklabor.
 
 <img src="images/Dashboard.png" alt="OurDAQ Dashboard" height="300">
 <img src="images/DMM.png" alt="Digitales Multimeter" height="300">
@@ -12,7 +12,7 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
 ## Hardwareanforderungen
 
 - `Raspberry Pi`
-- Digilent MCC DAQ HAT `MCC 118`
+- `Digilent MCC DAQ HAT MCC 118`
 - Externe Peripherie:
   - DAC + OPV + Mosfet für Spannungsversorgung
   - Gehäuse mit geplanten Anschlüssen und Steckern
@@ -37,12 +37,14 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
 
    ```bash
    sudo apt update
-   sudo apt upgrade
+   sudo apt full-upgrade
+   sudo reboot 
    ```
 
 2. Repository klonen:
 
    ```bash
+   cd ~
    git clone https://github.com/MSY-Walter/OurDAQ.git
    ```
 
@@ -51,7 +53,7 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
 1. Virtuelle Umgebung erstellen:
 
    ```bash
-   cd OurDAQ
+   cd ~/OurDAQ
    python3 -m venv .venv
    ```
 
@@ -89,7 +91,8 @@ Das System bietet folgende Standard-Messroutinen:
 - Oszilloskop-Funktionalität
 - Netzteil-Funktionalität
 - Funktionsgenerator-Funktionalität
-- Diodenkennlinie/Filterkennlinie-Funktionalität
+- Diodenkennlinie-Funktionalität
+- Filterkennlinie-Funktionalität
 
 ## Projektstruktur
 
@@ -108,6 +111,10 @@ Das System bietet folgende Standard-Messroutinen:
 - `LICENSE`: MIT License
 - `README.md`: Diese Datei
 - `requirements.txt`: Python-Paket
+
+## Link
+
+[`MCC DAQ HAT Library for Raspberry Pi`](https://github.com/mccdaq/daqhats)
 
 ## Lizenz
 
