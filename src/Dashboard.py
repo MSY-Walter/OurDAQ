@@ -421,8 +421,8 @@ class OurDAQDashboard(QMainWindow):
     def starte_netzteil(self):
         """Startet das Netzteil"""
         try:
-            # Pfad zum Netzteil.py relativ zum aktuellen Verzeichnis
-            netzteil_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Netzteil.py")
+            # Pfad zum Netzteilfunktion.py relativ zum aktuellen Verzeichnis
+            netzteil_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Netzteilfunktion.py")
             
             if os.path.exists(netzteil_pfad):
                 # Starte das Netzteil-Modul als separaten Prozess
@@ -430,7 +430,7 @@ class OurDAQDashboard(QMainWindow):
             else:
                 QMessageBox.warning(
                     self, "Datei nicht gefunden", 
-                    f"Die Datei Netzteil.py wurde nicht gefunden.\nGesucht in: {netzteil_pfad}"
+                    f"Die Datei Netzteilfunktion.py wurde nicht gefunden.\nGesucht in: {netzteil_pfad}"
                 )
         except Exception as e:
             QMessageBox.critical(
