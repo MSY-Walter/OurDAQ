@@ -226,7 +226,7 @@ class OurDAQDashboard(QMainWindow):
         dmm_icon = os.path.join(ICONS_DIR, "dmm_icon.png")
         funktionsgenerator_icon = os.path.join(ICONS_DIR, "funktionsgenerator_icon.png")
         oszilloskop_icon = os.path.join(ICONS_DIR, "oszilloskop_icon.png")
-        netzteil_icon = os.path.join(ICONS_DIR, "netzteil_icon.png")
+        netzteilfunktion_icon = os.path.join(ICONS_DIR, "netzteilfunktion_icon.png")
         diode_icon = os.path.join(ICONS_DIR, "diode_icon.png")
         filter_icon = os.path.join(ICONS_DIR, "filter_icon.png")
         
@@ -257,14 +257,14 @@ class OurDAQDashboard(QMainWindow):
         oszilloskop_card.button.clicked.connect(self.starte_oszilloskop)
         module_layout.addWidget(oszilloskop_card, 1, 0)
         
-        # Netzteil (anstatt Kennlinienmessung)
-        netzteil_card = ModuleCard(
-            "Netzteil",
+        # Netzteilfunktion
+        netzteilfunktion_card = ModuleCard(
+            "Netzteilfunktion",
             "Stellen Sie hier einstellbare Spannungen ein",
-            netzteil_icon if os.path.exists(netzteil_icon) else None
+            netzteilfunktion_icon if os.path.exists(netzteilfunktion_icon) else None
         )
-        netzteil_card.button.clicked.connect(self.starte_netzteil)
-        module_layout.addWidget(netzteil_card, 1, 1)
+        netzteilfunktion_card.button.clicked.connect(self.starte_netzteilfunktion)
+        module_layout.addWidget(netzteilfunktion_card, 1, 1)
         
         # Diodenkennlinie - in Entwicklung
         diode_card = ModuleCard(
@@ -418,24 +418,24 @@ class OurDAQDashboard(QMainWindow):
                 f"Beim Starten des Oszilloskops ist ein Fehler aufgetreten:\n{str(e)}"
             )
     
-    def starte_netzteil(self):
-        """Startet das Netzteil"""
+    def starte_netzteilfunktion(self):
+        """Startet das Netzteilfunktion"""
         try:
             # Pfad zum Netzteilfunktion.py relativ zum aktuellen Verzeichnis
-            netzteil_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Netzteilfunktion.py")
+            netzteilfunktion_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Netzteilfunktion.py")
             
-            if os.path.exists(netzteil_pfad):
-                # Starte das Netzteil-Modul als separaten Prozess
-                subprocess.Popen([sys.executable, netzteil_pfad])
+            if os.path.exists(netzteilfunktion_pfad):
+                # Starte das Netzteilfunktion-Modul als separaten Prozess
+                subprocess.Popen([sys.executable, netzteilfunktion_pfad])
             else:
                 QMessageBox.warning(
                     self, "Datei nicht gefunden", 
-                    f"Die Datei Netzteilfunktion.py wurde nicht gefunden.\nGesucht in: {netzteil_pfad}"
+                    f"Die Datei Netzteilfunktion.py wurde nicht gefunden.\nGesucht in: {netzteilfunktion_pfad}"
                 )
         except Exception as e:
             QMessageBox.critical(
                 self, "Fehler beim Starten", 
-                f"Beim Starten des Netzteils ist ein Fehler aufgetreten:\n{str(e)}"
+                f"Beim Starten des Netzteilfunktions ist ein Fehler aufgetreten:\n{str(e)}"
             )
 
     def zeige_hilfe(self):
@@ -463,7 +463,7 @@ class OurDAQDashboard(QMainWindow):
            - Trigger-Funktionalität und Zeitbasis-Einstellung
            - CSV-Export der Messdaten
         
-        4. Netzteil
+        4. Netzteilfunktion
            - Einstellbar Spannungen
            - Überlastschutz und Überwachung
         
