@@ -104,7 +104,7 @@ Das System bietet folgende Standard-Messroutinen:
   - `DMM.py`: Dashboard für Digitalmultimeter
   - `Filterkennlinie.py`: Dashboard für Filterkennlinie
   - `Funktionsgenerator.py`: Dashboard zu Erzeugung der Signale
-  - `Netzteil.py`: Dashboard für Netzteil
+  - `Netzteilfunktion.py`: Dashboard für Netzteilfunktion
   - `Oszilloskop.py`: Dashboard für Oszilloskop
   - `Signal_Generator.py`: Datei zu Erzeugung der simulierte Signale
 - `.gitignore`: Bei commit ignorieren
