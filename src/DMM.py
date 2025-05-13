@@ -3,7 +3,7 @@
 Digitaler Multimeter für MCC 118
 Ein LabVIEW-ähnlicher DMM für Spannungsmessungen mit MCC 118
 Mit Überlastungswarnung, Diagrammanzeige und CSV-Datenspeicherung
-Erweiterte Messbereich von 20V bis 200mV mit verbesserte Präzision
+Erweiterte Messbereich von ±10V bis ±200mV mit verbesserte Präzision
 """
 
 import sys
@@ -28,7 +28,7 @@ class MesswertAnzeige(QWidget):
         super().__init__(parent)
         self.wert = 0.0
         self.einheit = "V DC"
-        self.bereich = 20.0  # Erweitert auf 20V maximal
+        self.bereich = 10.0  # Geändert von 20V auf 10V als Maximum
         self.ueberlast = False
         self.dezimalstellen = 2  # Standard-Dezimalstellen
         self.setMinimumHeight(120)
@@ -216,7 +216,7 @@ class DigitalMultimeter(QMainWindow):
         self.init_mcc118()
         
         self.modus = "Spannung DC"
-        self.bereich = 20.0  # Neuer Maximalbereich von 20V
+        self.bereich = 10.0  # Geändert von 20V auf 10V als Maximum
         self.channel = 0  # Standardmäßig Kanal 0
         
         self.timer = QTimer(self)
@@ -453,11 +453,11 @@ class DigitalMultimeter(QMainWindow):
         self.bereich_combo.clear()
         
         if "Spannung" in self.modus:
-            # Neue LabVIEW-ähnliche Messbereiche von 20V bis 200mV
-            self.bereich_combo.addItems(["20V", "10V", "2V", "1V", "500mV", "200mV"])
-            self.bereich = 20.0
+            # Geänderte Messbereiche ohne 20V und mit ±-Symbol
+            self.bereich_combo.addItems(["±10V", "±2V", "±1V", "±500mV", "±200mV"])
+            self.bereich = 10.0
         elif "Strom" in self.modus:
-            self.bereich_combo.addItems(["1A", "500mA", "200mA", "100mA"])
+            self.bereich_combo.addItems(["±1A", "±500mA", "±200mA", "±100mA"])
             self.bereich = 1.0
         
         self.bereich_geaendert()
@@ -465,16 +465,19 @@ class DigitalMultimeter(QMainWindow):
     def bereich_geaendert(self):
         bereich_text = self.bereich_combo.currentText()
         
-        if "V" in bereich_text:
-            if "mV" in bereich_text:
-                self.bereich = float(bereich_text.replace("mV", "")) / 1000.0
+        # Entfernen des ±-Symbols für die numerische Verarbeitung
+        bereich_text_ohne_plus_minus = bereich_text.replace("±", "")
+        
+        if "V" in bereich_text_ohne_plus_minus:
+            if "mV" in bereich_text_ohne_plus_minus:
+                self.bereich = float(bereich_text_ohne_plus_minus.replace("mV", "")) / 1000.0
             else:
-                self.bereich = float(bereich_text.replace("V", ""))
-        elif "A" in bereich_text:
-            if "mA" in bereich_text:
-                self.bereich = float(bereich_text.replace("mA", "")) / 1000.0
+                self.bereich = float(bereich_text_ohne_plus_minus.replace("V", ""))
+        elif "A" in bereich_text_ohne_plus_minus:
+            if "mA" in bereich_text_ohne_plus_minus:
+                self.bereich = float(bereich_text_ohne_plus_minus.replace("mA", "")) / 1000.0
             else:
-                self.bereich = float(bereich_text.replace("A", ""))
+                self.bereich = float(bereich_text_ohne_plus_minus.replace("A", ""))
         
         self.messwert_anzeige.set_bereich(self.bereich)
         self.ueberlast_status = False
@@ -615,7 +618,7 @@ class DigitalMultimeter(QMainWindow):
         
         Bedienung:
         1. Wählen Sie den Messmodus (derzeit nur DC Spannung)
-        2. Wählen Sie den Messbereich (20V, 10V, 2V, 1V, 500mV, 200mV)
+        2. Wählen Sie den Messbereich (±10V, ±2V, ±1V, ±500mV, ±200mV)
         3. Wählen Sie den Kanal (Kanal 0 bis Kanal 7)
         4. Klicken Sie 'Aufnahme starten', um Messwerte aufzuzeichnen
         5. Klicken Sie 'Aufnahme stoppen', um die Aufzeichnung zu beenden
@@ -627,11 +630,13 @@ class DigitalMultimeter(QMainWindow):
         
         Hinweise: 
         - Überlast wird angezeigt, wenn die Spannung den Messbereich überschreitet
-        - Der MCC 118 misst Spannungen bis ±10 V, aber die Software wurde erweitert, um bis zu 20V anzuzeigen
+        - Der MCC 118 misst Spannungen bis ±10 V
         - Die Anzahl der Dezimalstellen passt sich automatisch an den Messbereich an
         - Strommessungen erfordern externe Hardware (Shunt-Widerstand)
         """
         
+        QMessageBox.information(self, "Hilfe", hilfe_text)
+    
     def closeEvent(self, event):
         self.stoppe_aufnahme()
         if self.hat:
