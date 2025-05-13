@@ -5,3 +5,5 @@ daqhats
 mcculw
 pyqtgraph
 openpyxl
+ipykernel
+notebook

@@ -30,6 +30,8 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
   - `mcculw`
   - `pyqtgraph`
   - `openpyxl`
+  - `ipykernel`
+  - `notebook`
 
 ## Installation
 
@@ -100,9 +102,9 @@ Das System bietet folgende Standard-Messroutinen:
 - `src/`: Quellcode-Verzeichnis
   - `resources/`: Quelle von images und icons
   - `Dashboard.py`: Hauptmenü
-  - `Diodenkennlinie.py`: Dashboard für Diodenkennlinie
+  - `Diodenkennlinie.ipynb`: Jupyter Notebook für Diodenkennlinie
   - `DMM.py`: Dashboard für Digitalmultimeter
-  - `Filterkennlinie.py`: Dashboard für Filterkennlinie
+  - `Filterkennlinie.ipynb`: Jupyter Notebook für Filterkennlinie
   - `Funktionsgenerator.py`: Dashboard zu Erzeugung der Signale
   - `Netzteilfunktion.py`: Dashboard für Netzteilfunktion
   - `Oszilloskop.py`: Dashboard für Oszilloskop
