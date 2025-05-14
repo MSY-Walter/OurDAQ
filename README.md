@@ -32,7 +32,6 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
   - `pyqtgraph`
   - `openpyxl`
   - `notebook`
-  - `ipykernel`
 
 ## Installation
 
@@ -59,26 +58,20 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
 
 ### Entwicklungsumgebung
 
-1. Virtuelle Umgebung erstellen:
+1. Abhängigkeiten und Pakete installieren:
 
    ```bash
    cd ~/OurDAQ
-   uv init
-   ```
-
-2. Abhängigkeiten und Pakete installieren:
-
-   ```bash
    uv sync
    ```
 
-3. Link von der virtuellen Umgebung zum PyQt5-Systempaket erstellen, z.B.: (Hinweis: "sebastian" und "python3.11" muss angepasst werden, wie "user" und "python3.xx")
+2. Link von der virtuellen Umgebung zum PyQt5-Systempaket erstellen, z.B.: (Hinweis: "sebastian" und "python3.11" muss angepasst werden, wie "user" und "python3.xx")
 
    ```bash
    ln -s /usr/lib/python3/dist-packages/PyQt5 /home/sebastian/OurDAQ/.venv/lib/python3.11/site-packages/
    ```
 
-4. Python Programm starten
+3. Python Programm starten
 
    ```bash
    uv run src/Dashboard.py
