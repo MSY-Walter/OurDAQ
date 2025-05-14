@@ -1,9 +1,0 @@
-numpy
-matplotlib
-pandas
-daqhats
-mcculw
-pyqtgraph
-openpyxl
-ipykernel
-notebook

@@ -22,6 +22,7 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
 - `Linux`
 - `Python 3.11+`
 - `PyQt5`
+- `uv`
 - Folgende Python-Pakete:
   - `numpy`
   - `matplotlib`
@@ -30,12 +31,18 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
   - `mcculw`
   - `pyqtgraph`
   - `openpyxl`
-  - `ipykernel`
   - `notebook`
+  - `ipykernel`
 
 ## Installation
 
-1. Update und upgrade:
+1. uv installieren (Falls nicht vorhanden):
+
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+
+2. update und upgrade:
 
    ```bash
    sudo apt update
@@ -43,7 +50,7 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
    sudo reboot 
    ```
 
-2. Repository klonen:
+3. repository klonen:
 
    ```bash
    cd ~
@@ -56,33 +63,25 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
 
    ```bash
    cd ~/OurDAQ
-   python3 -m venv .venv
+   uv init
    ```
 
-2. Umgebung aktivieren:
+2. Abhängigkeiten und Pakete installieren:
 
    ```bash
-   source .venv/bin/activate
+   uv sync
    ```
 
-3. Abhängigkeiten und Pakete installieren:
-
-   ```bash
-   sudo apt-get install python3-pyqt5
-   pip install uv
-   uv pip install -r requirements.txt
-   ```
-
-4. Link von der virtuellen Umgebung zum PyQt5-Systempaket erstellen, z.B.: (Hinweis: "sebastian" und "python3.11" muss angepasst werden, wie "user" und "python3.xx")
+3. Link von der virtuellen Umgebung zum PyQt5-Systempaket erstellen, z.B.: (Hinweis: "sebastian" und "python3.11" muss angepasst werden, wie "user" und "python3.xx")
 
    ```bash
    ln -s /usr/lib/python3/dist-packages/PyQt5 /home/sebastian/OurDAQ/.venv/lib/python3.11/site-packages/
    ```
 
-5. Python Programm starten
+4. Python Programm starten
 
    ```bash
-   python3 src/Dashboard.py
+   uv run src/Dashboard.py
    ```
 
 ## Verwendung
@@ -99,6 +98,7 @@ Das System bietet folgende Standard-Messroutinen:
 ## Projektstruktur
 
 - `docs/`: Dokumentation
+- `images`: Bild
 - `src/`: Quellcode-Verzeichnis
   - `resources/`: Quelle von images und icons
   - `Dashboard.py`: Hauptmenü
@@ -110,13 +110,17 @@ Das System bietet folgende Standard-Messroutinen:
   - `Oszilloskop.py`: Dashboard für Oszilloskop
   - `Signal_Generator.py`: Datei zu Erzeugung der simulierte Signale
 - `.gitignore`: Bei commit ignorieren
+- `.python-version`: Python Version merken
 - `LICENSE`: MIT License
+- `pyproject.toml`: Abhängigkeiten und Pakete
 - `README.md`: Diese Datei
-- `requirements.txt`: Python-Paket
+- `uv.lock`: Quelle von Abhängigkeiten und Pakete
 
 ## Link
 
 [`MCC DAQ HAT Library for Raspberry Pi`](https://github.com/mccdaq/daqhats)
+
+[`uv Introduction`](https://docs.astral.sh/uv/)
 
 ## Lizenz
 
