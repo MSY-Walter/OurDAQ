@@ -1,37 +1,46 @@
-# Datenerfassungssystem auf Raspberry Pi (OurDAQ)
+# Datenerfassungssystem auf Raspberry Pi 5 (OurDAQ)
 
 ## Projektbeschreibung
 
-Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdatenerfassungssystems (DAQ) basierend auf `Raspberry Pi` und `Digilent MCC DAQ HAT MCC 118` ab. Das System dient als Grundlage für ein studentisches Messtechniklabor.
+Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdatenerfassungssystems (DAQ) basierend auf [`Raspberry Pi 5`](https://www.raspberrypi.com/documentation/computers/raspberry-pi.html) und [`Digilent MCC DAQ HAT MCC 118`](https://mccdaq.github.io/daqhats/overview.html#mcc-118) ab. Das System dient als Grundlage für ein studentisches Messtechniklabor.
 
 <img src="images/Dashboard.png" alt="OurDAQ Dashboard" height="300">
 <img src="images/DMM.png" alt="Digitales Multimeter" height="300">
 <img src="images/Funktionsgenerator.png" alt="Funktionsgenerator" height="300">
 <img src="images/Osziloskop.png" alt="Osziloskop" height="300">
 
+Das System bietet folgende Standard-Messroutinen:
+
+- Multimeter-Funktionalität
+- Oszilloskop-Funktionalität
+- Netzteil-Funktionalität
+- Funktionsgenerator-Funktionalität
+- Diodenkennlinie-Funktionalität
+- Filterkennlinie-Funktionalität
+
 ## Hardwareanforderungen
 
-- `Raspberry Pi`
-- `Digilent MCC DAQ HAT MCC 118`
+- [`Raspberry Pi 5`](https://www.raspberrypi.com/documentation/computers/raspberry-pi.html)
+- [`Digilent MCC DAQ HAT MCC 118`](https://mccdaq.github.io/daqhats/overview.html#mcc-118)
 - Externe Peripherie:
   - DAC + OPV + Mosfet für Spannungsversorgung
   - Gehäuse mit geplanten Anschlüssen und Steckern
 
 ## Softwareanforderungen
 
-- `Linux`
-- `Python 3.11+`
-- `PyQt5`
-- `uv`
-- Folgende Python-Pakete:
-  - `numpy`
-  - `matplotlib`
-  - `pandas`
-  - `daqhats`
-  - `mcculw`
-  - `pyqtgraph`
-  - `openpyxl`
-  - `notebook`
+- Linux System wie [`Raspberry Pi OS`](https://www.raspberrypi.com/software/) oder [`Ubuntu`](https://ubuntu.com/download/raspberry-pi)
+- [`uv`](https://docs.astral.sh/uv/) (Python-Paketemanager)
+- `python>=3.11`
+- Und Folgende Python-Pakete:
+  - `daqhats>=1.4.1.0`
+  - `matplotlib>=3.10.3`
+  - `mcculw>=1.0.0`
+  - `notebook>=7.4.2`
+  - `numpy>=2.2.5`
+  - `openpyxl>=3.1.5`
+  - `pandas>=2.2.3`
+  - `pyqt5>=5.15.11`
+  - `pyqtgraph>=0.13.7`
 
 ## Installation
 
@@ -46,7 +55,7 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
    ```bash
    sudo apt update
    sudo apt full-upgrade
-   sudo reboot 
+   sudo reboot
    ```
 
 3. repository klonen:
@@ -71,22 +80,11 @@ Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdaten
    ln -s /usr/lib/python3/dist-packages/PyQt5 /home/sebastian/OurDAQ/.venv/lib/python3.11/site-packages/
    ```
 
-3. Python Programm starten
-
-   ```bash
-   uv run src/Dashboard.py
-   ```
-
 ## Verwendung
 
-Das System bietet folgende Standard-Messroutinen:
-
-- Multimeter-Funktionalität
-- Oszilloskop-Funktionalität
-- Netzteil-Funktionalität
-- Funktionsgenerator-Funktionalität
-- Diodenkennlinie-Funktionalität
-- Filterkennlinie-Funktionalität
+```bash
+uv run src/Dashboard.py
+```
 
 ## Projektstruktur
 
