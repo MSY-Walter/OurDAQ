@@ -94,6 +94,7 @@ uv run src/Dashboard.py
 - `images`: Bild
 - `src/`: Quellcode-Verzeichnis
   - `resources/`: Quelle von images und icons
+  - `AD9833.py`: Datei zu Erzeugung der Signale mit AD9833
   - `Dashboard.py`: Hauptmenü
   - `Diodenkennlinie.ipynb`: Jupyter Notebook für Diodenkennlinie
   - `DMM.py`: Dashboard für Digitalmultimeter
