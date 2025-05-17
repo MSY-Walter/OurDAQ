@@ -83,13 +83,13 @@ Das System bietet folgende Standard-Messroutinen:
 2. Abhängigkeiten und Pakete in der virtuellen Umgebung installieren:
 
    ```bash
-   uv sync --python $(which python3)
+   uv sync
    ```
 
 ## Verwendung
 
 ```bash
-uv run --python $(which python3) src/Dashboard.py
+uv run src/Dashboard.py
 ```
 
 ## Projektstruktur
@@ -107,7 +107,6 @@ uv run --python $(which python3) src/Dashboard.py
   - `Oszilloskop.py`: Dashboard für Oszilloskop
   - `Signal_Generator.py`: Datei zu Erzeugung der simulierte Signale
 - `.gitignore`: Bei commit ignorieren
-- `.python-version`: Python Version merken
 - `LICENSE`: MIT License
 - `pyproject.toml`: Abhängigkeiten und Pakete
 - `README.md`: Diese Datei
