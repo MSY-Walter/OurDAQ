@@ -31,6 +31,7 @@ Das System bietet folgende Standard-Messroutinen:
 - Linux System wie [`Raspberry Pi OS`](https://www.raspberrypi.com/software/) oder [`Ubuntu`](https://ubuntu.com/download/raspberry-pi)
 - [`uv`](https://docs.astral.sh/uv/) (Python-Paketemanager)
 - `python>=3.11`
+- `PyQt5`
 - Und Folgende Python-Pakete:
   - `daqhats>=1.4.1.0`
   - `matplotlib>=3.10.3`
@@ -39,7 +40,6 @@ Das System bietet folgende Standard-Messroutinen:
   - `numpy>=2.2.5`
   - `openpyxl>=3.1.5`
   - `pandas>=2.2.3`
-  - `pyqt5>=5.15.11`
   - `pyqtgraph>=0.13.7`
 
 ## Installation
@@ -58,7 +58,13 @@ Das System bietet folgende Standard-Messroutinen:
    sudo reboot
    ```
 
-3. repository klonen:
+3. PyQt5-Systempaket installieren (Falls nicht vorhanden):
+
+   ```bash
+   sudo apt install python3-pyqt5
+   ```
+
+4. repository klonen:
 
    ```bash
    cd ~
@@ -67,23 +73,23 @@ Das System bietet folgende Standard-Messroutinen:
 
 ### Entwicklungsumgebung
 
-1. Abhängigkeiten und Pakete installieren:
+1. Link von PyQt5-Systempaket zu der virtuellen Umgebung erstellen:
 
    ```bash
    cd ~/OurDAQ
-   uv sync
+   python3 -m venv --system-site-packages .venv
    ```
 
-2. Link von der virtuellen Umgebung zum PyQt5-Systempaket erstellen, z.B.: (Hinweis: "sebastian" und "python3.11" muss angepasst werden, wie "user" und "python3.xx")
+2. Abhängigkeiten und Pakete in der virtuellen Umgebung installieren:
 
    ```bash
-   ln -s /usr/lib/python3/dist-packages/PyQt5 /home/sebastian/OurDAQ/.venv/lib/python3.11/site-packages/
+   uv sync --python $(which python3)
    ```
 
 ## Verwendung
 
 ```bash
-uv run src/Dashboard.py
+uv run --python $(which python3) src/Dashboard.py
 ```
 
 ## Projektstruktur
