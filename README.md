@@ -5,9 +5,6 @@
 Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdatenerfassungssystems (DAQ) basierend auf [`Raspberry Pi 5`](https://www.raspberrypi.com/documentation/computers/raspberry-pi.html) und [`Digilent MCC DAQ HAT MCC 118`](https://mccdaq.github.io/daqhats/overview.html#mcc-118) ab. Das System dient als Grundlage für ein studentisches Messtechniklabor.
 
 <img src="images/Dashboard.png" alt="OurDAQ Dashboard" height="300">
-<img src="images/DMM.png" alt="Digitales Multimeter" height="300">
-<img src="images/Funktionsgenerator.png" alt="Funktionsgenerator" height="300">
-<img src="images/Osziloskop.png" alt="Osziloskop" height="300">
 
 Das System bietet folgende Standard-Messroutinen:
 
@@ -34,13 +31,12 @@ Das System bietet folgende Standard-Messroutinen:
 - `PyQt5`
 - Und Folgende Python-Pakete:
   - `daqhats>=1.4.1.0`
+  - `dash>=3.0.4`
   - `matplotlib>=3.10.3`
-  - `mcculw>=1.0.0`
   - `notebook>=7.4.2`
   - `numpy>=2.2.5`
-  - `openpyxl>=3.1.5`
-  - `pandas>=2.2.3`
   - `pyqtgraph>=0.13.7`
+  - `spidev>=3.7`
 
 ## Installation
 
@@ -106,6 +102,7 @@ uv run src/Dashboard.py
   - `Netzteilfunktion.py`: Dashboard für Netzteilfunktion
   - `Oszilloskop.py`: Dashboard für Oszilloskop
   - `Signal_Generator.py`: Datei zu Erzeugung der simulierte Signale
+  - `web_server.py`: Oszilloskop in Web
 - `.gitignore`: Bei commit ignorieren
 - `LICENSE`: MIT License
 - `pyproject.toml`: Abhängigkeiten und Pakete
