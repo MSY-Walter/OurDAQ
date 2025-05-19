@@ -26,7 +26,7 @@ Das System bietet folgende Standard-Messroutinen:
 ## Softwareanforderungen
 
 - Linux System wie [`Raspberry Pi OS`](https://www.raspberrypi.com/software/) oder [`Ubuntu`](https://ubuntu.com/download/raspberry-pi)
-- [`uv`](https://docs.astral.sh/uv/) (Python-Paketemanager)
+- [`uv`](https://docs.astral.sh/uv/) Python-Paketemanager
 - `python>=3.11`
 - `PyQt5`
 - Und Folgende Python-Pakete:
@@ -84,8 +84,22 @@ Das System bietet folgende Standard-Messroutinen:
 
 ## Verwendung
 
+Hauptmenü öffnen:
+
 ```bash
 uv run src/Dashboard.py
+```
+
+Bestimmte Funktionalität öffnen:
+
+```bash
+uv run src/<Dateiname>
+```
+
+In Jupyter Notebook öffnen:
+
+```bash
+uv run jupyter notebook
 ```
 
 ## Projektstruktur
