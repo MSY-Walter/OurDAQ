@@ -47,8 +47,6 @@ def write_to_AD9833(data):
 # Frequenz einstellen (in Hz)
 def set_frequency(freq):
     # Berechne Frequenzregister-Wert
-    # AD9833 hat einen 28-Bit Frequenzregister
-    # FREQ = (frequency * 2^28) / fMCLK
     fMCLK = 25000000  # 25 MHz Standardtaktfrequenz
     freq_word = int((freq * 2**28) / fMCLK)
     
@@ -63,27 +61,62 @@ def set_frequency(freq):
 def set_waveform(waveform):
     write_to_AD9833(waveform)
 
+# Wellenform vom Benutzer erfragen
+def get_waveform_choice():
+    while True:
+        print("\nWählen Sie die Wellenform:")
+        print("1. Sinuswelle")
+        print("2. Dreieckswelle")
+        print("3. Rechteckwelle")
+        choice = input("Bitte wählen Sie (1-3): ")
+        
+        if choice == '1':
+            return SINE_WAVE, "Sinuswelle"
+        elif choice == '2':
+            return TRIANGLE_WAVE, "Dreieckswelle"
+        elif choice == '3':
+            return SQUARE_WAVE, "Rechteckwelle"
+        else:
+            print("Ungültige Auswahl, bitte versuchen Sie es erneut.")
+
+# Frequenz vom Benutzer erfragen
+def get_frequency():
+    while True:
+        try:
+            freq = float(input("\nBitte geben Sie die Frequenz ein (Hz): "))
+            if 0 < freq <= 12500000:  # AD9833 maximale Frequenz ist ca. 12.5 MHz
+                return freq
+            else:
+                print("Die Frequenz muss zwischen 0 und 12.500.000 Hz liegen.")
+        except ValueError:
+            print("Bitte geben Sie eine gültige Zahl ein.")
+
 # Hauptprogramm
 def main():
     try:
         # AD9833 initialisieren
         init_AD9833()
-        print("AD9833 initialisiert.")
+        print("AD9833 wurde initialisiert.")
         
-        # 1 kHz Sinuswelle erzeugen
-        set_frequency(10000)  # 100 Hz einstellen
-        set_waveform(SINE_WAVE)  # Sinuswelle auswählen
-        print("100 Hz Sinuswelle wird ausgegeben (nativ ca. ±0.325V).")
-        
-        # Programm laufen lassen, bis Benutzer abbricht
-        print("Drücken Sie STRG+C zum Beenden...")
         while True:
-            time.sleep(1)
+            # Vom Benutzer Wellenform und Frequenz erhalten
+            waveform, waveform_name = get_waveform_choice()
+            freq = get_frequency()
+            
+            # Wellenform und Frequenz einstellen
+            set_frequency(freq)
+            set_waveform(waveform)
+            
+            print(f"\nAusgabe: {freq} Hz {waveform_name} (Standard-Spannungspegel ca. 0,65V Spitze-zu-Spitze)")
+            print("Drücken Sie Strg+C zum Beenden oder Enter, um die Einstellungen zu ändern.")
+            input()  # Warten auf Benutzereingabe
             
     except KeyboardInterrupt:
-        print("\nProgramm beendet.")
+        print("\nProgramm wurde beendet.")
     finally:
-        # Aufräumen
+        # Gerät zurücksetzen vor dem Beenden
+        write_to_AD9833(0x2100)
+        # Ressourcen aufräumen
         GPIO.cleanup()
         spi.close()
 
