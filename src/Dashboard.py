@@ -7,6 +7,7 @@ Dashboard für das Datenerfassungssystem auf Raspberry Pi
 import sys
 import os
 import subprocess
+import webbrowser
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QPushButton, 
                            QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, 
                            QGroupBox, QFrame, QSpacerItem, QSizePolicy,
@@ -266,26 +267,54 @@ class OurDAQDashboard(QMainWindow):
         netzteilfunktion_card.button.clicked.connect(self.starte_netzteilfunktion)
         module_layout.addWidget(netzteilfunktion_card, 1, 1)
         
-        # Diodenkennlinie - in Entwicklung
+        # Diodenkennlinie - Jupyter Notebook öffnen
         diode_card = ModuleCard(
             "Diodenkennlinie",
             "Analysieren Sie hier die Diodenkennlinie",
             diode_icon if os.path.exists(diode_icon) else None
         )
-        diode_card.button.setText("Bald verfügbar")
-        diode_card.button.setEnabled(False)
-        diode_card.button.setStyleSheet("QPushButton { background-color: #999999; color: white; border-radius: 5px; padding: 8px; }")
+        diode_card.button.setText("Notebook öffnen")
+        diode_card.button.setStyleSheet("""
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                border-radius: 5px;
+                font-weight: bold;
+                padding: 8px;
+            }
+            QPushButton:hover {
+                background-color: #ff7722;
+            }
+            QPushButton:pressed {
+                background-color: #ee5500;
+            }
+        """)
+        diode_card.button.clicked.connect(self.oeffne_diodenkennlinie_notebook)
         module_layout.addWidget(diode_card, 2, 0)
         
-        # Filterkennlinie - in Entwicklung
+        # Filterkennlinie - Jupyter Notebook öffnen
         filter_card = ModuleCard(
             "Filterkennlinie",
             "Analysieren Sie hier die Filterkennlinie",
             filter_icon if os.path.exists(filter_icon) else None
         )
-        filter_card.button.setText("Bald verfügbar")
-        filter_card.button.setEnabled(False)
-        filter_card.button.setStyleSheet("QPushButton { background-color: #999999; color: white; border-radius: 5px; padding: 8px; }")
+        filter_card.button.setText("Notebook öffnen")
+        filter_card.button.setStyleSheet("""
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                border-radius: 5px;
+                font-weight: bold;
+                padding: 8px;
+            }
+            QPushButton:hover {
+                background-color: #ff7722;
+            }
+            QPushButton:pressed {
+                background-color: #ee5500;
+            }
+        """)
+        filter_card.button.clicked.connect(self.oeffne_filterkennlinie_notebook)
         module_layout.addWidget(filter_card, 2, 1)
         
         haupt_layout.addWidget(module_gruppe)
@@ -358,6 +387,120 @@ class OurDAQDashboard(QMainWindow):
         
         haupt_layout.addWidget(footer_gruppe)
     
+    def ist_jupyter_installiert(self):
+        """Überprüft, ob Jupyter Notebook installiert ist"""
+        try:
+            # Versuche jupyter --version auszuführen
+            result = subprocess.run(['jupyter', '--version'], 
+                                 capture_output=True, text=True, timeout=5)
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            # Versuche es mit jupyter-notebook
+            try:
+                result = subprocess.run(['jupyter-notebook', '--version'], 
+                                     capture_output=True, text=True, timeout=5)
+                return result.returncode == 0
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                return False
+    
+    def oeffne_diodenkennlinie_notebook(self):
+        """Öffnet das Diodenkennlinie Jupyter Notebook"""
+        try:
+            # Pfad zum Notebook relativ zum aktuellen Verzeichnis
+            notebook_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Diodenkennlinie.ipynb")
+            
+            if not os.path.exists(notebook_pfad):
+                QMessageBox.warning(
+                    self, "Datei nicht gefunden", 
+                    f"Das Notebook Diodenkennlinie.ipynb wurde nicht gefunden.\nGesucht in: {notebook_pfad}"
+                )
+                return
+            
+            # Überprüfe, ob Jupyter installiert ist
+            if not self.ist_jupyter_installiert():
+                QMessageBox.warning(
+                    self, "Jupyter nicht gefunden", 
+                    "Jupyter Notebook ist nicht installiert oder nicht im PATH gefunden.\n\n"
+                    "Bitte installieren Sie Jupyter mit:\n"
+                    "pip install notebook\n\n"
+                    "oder\n\n"
+                    "conda install jupyter"
+                )
+                return
+            
+            # Versuche das Notebook mit Jupyter zu öffnen
+            try:
+                # Starte Jupyter Notebook mit dem spezifischen Notebook
+                subprocess.Popen(['jupyter', 'notebook', notebook_pfad])
+                QMessageBox.information(
+                    self, "Notebook wird geöffnet", 
+                    "Das Diodenkennlinie-Notebook wird in Ihrem Webbrowser geöffnet.\n"
+                    "Falls es nicht automatisch öffnet, schauen Sie im Terminal nach der URL."
+                )
+            except FileNotFoundError:
+                # Fallback: Versuche jupyter-notebook
+                subprocess.Popen(['jupyter-notebook', notebook_pfad])
+                QMessageBox.information(
+                    self, "Notebook wird geöffnet", 
+                    "Das Diodenkennlinie-Notebook wird in Ihrem Webbrowser geöffnet.\n"
+                    "Falls es nicht automatisch öffnet, schauen Sie im Terminal nach der URL."
+                )
+                
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Fehler beim Öffnen", 
+                f"Beim Öffnen des Diodenkennlinie-Notebooks ist ein Fehler aufgetreten:\n{str(e)}"
+            )
+    
+    def oeffne_filterkennlinie_notebook(self):
+        """Öffnet das Filterkennlinie Jupyter Notebook"""
+        try:
+            # Pfad zum Notebook relativ zum aktuellen Verzeichnis
+            notebook_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Filterkennlinie.ipynb")
+            
+            if not os.path.exists(notebook_pfad):
+                QMessageBox.warning(
+                    self, "Datei nicht gefunden", 
+                    f"Das Notebook Filterkennlinie.ipynb wurde nicht gefunden.\nGesucht in: {notebook_pfad}"
+                )
+                return
+            
+            # Überprüfe, ob Jupyter installiert ist
+            if not self.ist_jupyter_installiert():
+                QMessageBox.warning(
+                    self, "Jupyter nicht gefunden", 
+                    "Jupyter Notebook ist nicht installiert oder nicht im PATH gefunden.\n\n"
+                    "Bitte installieren Sie Jupyter mit:\n"
+                    "pip install notebook\n\n"
+                    "oder\n\n"
+                    "conda install jupyter"
+                )
+                return
+            
+            # Versuche das Notebook mit Jupyter zu öffnen
+            try:
+                # Starte Jupyter Notebook mit dem spezifischen Notebook
+                subprocess.Popen(['jupyter', 'notebook', notebook_pfad])
+                QMessageBox.information(
+                    self, "Notebook wird geöffnet", 
+                    "Das Filterkennlinie-Notebook wird in Ihrem Webbrowser geöffnet.\n"
+                    "Falls es nicht automatisch öffnet, schauen Sie im Terminal nach der URL."
+                )
+            except FileNotFoundError:
+                # Fallback: Versuche jupyter-notebook
+                subprocess.Popen(['jupyter-notebook', notebook_pfad])
+                QMessageBox.information(
+                    self, "Notebook wird geöffnet", 
+                    "Das Filterkennlinie-Notebook wird in Ihrem Webbrowser geöffnet.\n"
+                    "Falls es nicht automatisch öffnet, schauen Sie im Terminal nach der URL."
+                )
+                
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Fehler beim Öffnen", 
+                f"Beim Öffnen des Filterkennlinie-Notebooks ist ein Fehler aufgetreten:\n{str(e)}"
+            )
+    
     def starte_dmm(self):
         """Startet das Digitale Multimeter"""
         try:
@@ -382,7 +525,7 @@ class OurDAQDashboard(QMainWindow):
         """Startet den Funktionsgenerator"""
         try:
             # Pfad zum Funktionsgenerator.py relativ zum aktuellen Verzeichnis
-            funktionsgenerator_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Funktionsgenerator_AD9833.py")
+            funktionsgenerator_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Funktionsgenerator.py")
             
             if os.path.exists(funktionsgenerator_pfad):
                 # Starte den Funktionsgenerator als separaten Prozess
@@ -402,7 +545,7 @@ class OurDAQDashboard(QMainWindow):
         """Startet das Oszilloskop"""
         try:
             # Pfad zum Oszilloskop.py relativ zum aktuellen Verzeichnis
-            oszilloskop_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Oszilloskop_Web.py")
+            oszilloskop_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Oszilloskop.py")
             
             if os.path.exists(oszilloskop_pfad):
                 # Starte das Oszilloskop-Modul als separaten Prozess
@@ -467,8 +610,18 @@ class OurDAQDashboard(QMainWindow):
            - Einstellbar Spannungen
            - Überlastschutz und Überwachung
         
-        Weitere Module (Diodenkennlinie, Filterkennlinie) sind derzeit
-        in Entwicklung und werden in zukünftigen Versionen verfügbar sein.
+        5. Diodenkennlinie (Jupyter Notebook)
+           - Interaktive Simulation der Diodenkennlinie
+           - Basierend auf der Shockley-Diodengleichung
+           - Experimentierbare Parameter
+        
+        6. Filterkennlinie (Jupyter Notebook)
+           - Interaktive Simulation der Frequenzantwort
+           - Tiefpass, Hochpass und Bandpass Filter
+           - Visualisierung und CSV-Export
+        
+        Hinweis: Für die Jupyter Notebooks muss Jupyter installiert sein.
+        Installieren Sie es mit: pip install notebook
         """
         
         QMessageBox.information(self, "OurDAQ Dashboard - Hilfe", hilfe_text)
