@@ -10,6 +10,7 @@ dependencies = [
     "matplotlib>=3.10.3",
     "notebook>=7.4.2",
     "numpy>=2.2.5",
+    "pandas>=2.2.3",
     "pyqtgraph>=0.13.7",
     "spidev>=3.7",
 ]

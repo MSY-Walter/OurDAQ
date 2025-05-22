@@ -35,6 +35,7 @@ Das System bietet folgende Standard-Messroutinen:
   - `matplotlib>=3.10.3`
   - `notebook>=7.4.2`
   - `numpy>=2.2.5`
+  - `pandas>=2.2.3`
   - `pyqtgraph>=0.13.7`
   - `spidev>=3.7`
 
@@ -110,6 +111,7 @@ uv run jupyter notebook
   - `resources/`: Quelle von images und icons
   - `Dashboard.py`: Hauptmenü
   - `Diodenkennlinie.ipynb`: Jupyter Notebook für Diodenkennlinie
+  - `DMM_web.py`: Digitalmultimeter in Web
   - `DMM.py`: Dashboard für Digitalmultimeter
   - `Filterkennlinie.ipynb`: Jupyter Notebook für Filterkennlinie
   - `Funktionsgenerator_AD9833.py`: Datei zu Erzeugung der Signale mit AD9833
