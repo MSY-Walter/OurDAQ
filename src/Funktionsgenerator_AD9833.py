@@ -107,8 +107,7 @@ def main():
             set_frequency(freq)
             set_waveform(waveform)
             
-            print(f"\nAusgabe: {freq} Hz {waveform_name} (Standard-Spannungspegel ca. 0,65V Spitze-zu-Spitze)")
-            print("Drücken Sie Strg+C zum Beenden oder Enter, um die Einstellungen zu ändern.")
+            print("Drücken Sie Strg+C zum Beenden.")
             input()  # Warten auf Benutzereingabe
             
     except KeyboardInterrupt:
