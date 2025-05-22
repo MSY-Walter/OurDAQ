@@ -525,7 +525,7 @@ class OurDAQDashboard(QMainWindow):
         """Startet den Funktionsgenerator"""
         try:
             # Pfad zum Funktionsgenerator.py relativ zum aktuellen Verzeichnis
-            funktionsgenerator_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Funktionsgenerator.py")
+            funktionsgenerator_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Funktionsgenerator_AD9833.py")
             
             if os.path.exists(funktionsgenerator_pfad):
                 # Starte den Funktionsgenerator als separaten Prozess
@@ -545,7 +545,7 @@ class OurDAQDashboard(QMainWindow):
         """Startet das Oszilloskop"""
         try:
             # Pfad zum Oszilloskop.py relativ zum aktuellen Verzeichnis
-            oszilloskop_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Oszilloskop.py")
+            oszilloskop_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Oszilloskop_Web.py")
             
             if os.path.exists(oszilloskop_pfad):
                 # Starte das Oszilloskop-Modul als separaten Prozess
