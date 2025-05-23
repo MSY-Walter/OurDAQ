@@ -286,7 +286,7 @@ app.layout = html.Div([
             html.Div([
                 html.Div(id='measurement-display',
                         style={'backgroundColor': '#000', 'color': '#00ff00', 'padding': '30px',
-                               'borderRadius': '8px', 'textAlign': 'center', 'minHeight': '100px',
+                               'borderRadius': '8px', 'textAlign': 'center', 'minHeight': '40px',
                                'fontSize': '48px', 'fontWeight': 'bold', 'fontFamily': 'Courier New',
                                'marginBottom': '20px', 'border': '2px solid #00ff00'},
                         children='0.000000 V DC'),
@@ -350,7 +350,7 @@ def handle_configuration(n_clicks, mode, channel):
         dmm.modus = mode
         dmm.channel = channel
         dmm.start_measurement()
-        return True, True, 'Aktiviert', {
+        return True, True, 'Rekonfigurieren', {
             'width': '100%', 'height': '40px', 'backgroundColor': '#27ae60',
             'color': 'white', 'border': 'none', 'borderRadius': '5px',
             'fontWeight': 'bold', 'fontSize': '14px', 'marginTop': '15px'
@@ -434,7 +434,7 @@ def update_chart(n):
         # Leeres Chart
         fig = go.Figure()
         fig.update_layout(
-            title='Messwert-Verlauf',
+            title='Messwerte',
             xaxis_title='Zeit (s)',
             yaxis_title='Spannung (V)',
             showlegend=False,
@@ -528,27 +528,4 @@ def download_csv(n_clicks):
 
 
 if __name__ == '__main__':
-    # Setze den Standardwert für die IP-Adresse auf localhost
-    import logging
-    
-    # Setze Logging-Level für Dash und Plotly
-    logging.getLogger('werkzeug').setLevel(logging.WARNING)
-    logging.getLogger('dash.dash').setLevel(logging.WARNING)
-    
-    ip_address = get_ip_address()
-    print(f"Dash is running on http://{ip_address}:8050/")
-    
-    try:
-        app.run(
-            debug=False, 
-            host=ip_address,
-            port=8050,
-            dev_tools_hot_reload=False,
-            dev_tools_ui=False,
-            dev_tools_props_check=False,
-            use_reloader=False
-        )
-    except KeyboardInterrupt:
-        print("\nServer gestoppt")
-    finally:
-        dmm.stop_measurement()
+    app.run(host=get_ip_address(), port=8050, debug=True)

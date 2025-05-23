@@ -91,6 +91,12 @@ Hauptmenü öffnen:
 uv run src/Dashboard.py
 ```
 
+Hauptmenü in Web öffnen:
+
+```bash
+uv run src/Dashboard_web.py
+```
+
 Bestimmte Funktionalität öffnen:
 
 ```bash
@@ -109,6 +115,7 @@ uv run jupyter notebook
 - `images`: Bild
 - `src/`: Quellcode-Verzeichnis
   - `resources/`: Quelle von images und icons
+  - `Dashboard_web.py`: Hauptmenü in Web
   - `Dashboard.py`: Hauptmenü
   - `Diodenkennlinie.ipynb`: Jupyter Notebook für Diodenkennlinie
   - `DMM_web.py`: Digitalmultimeter in Web
@@ -117,7 +124,7 @@ uv run jupyter notebook
   - `Funktionsgenerator_AD9833.py`: Datei zu Erzeugung der Signale mit AD9833
   - `Funktionsgenerator.py`: Dashboard zu Erzeugung der Signale
   - `Netzteilfunktion.py`: Dashboard für Netzteilfunktion
-  - `Oszilloskop_Web.py`: Oszilloskop in Web
+  - `Oszilloskop_web.py`: Oszilloskop in Web
   - `Oszilloskop.py`: Dashboard für Oszilloskop
 - `.gitignore`: Bei commit ignorieren
 - `LICENSE`: MIT License

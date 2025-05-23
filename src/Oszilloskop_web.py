@@ -74,7 +74,7 @@ def init_chart_data(number_of_channels: int, number_of_samples: int) -> str:
 # Definition des HTML-Layouts für die Benutzeroberfläche
 app.layout = html.Div([
     html.H1(
-        children='MCC 118 DAQ HAT Web Server Beispiel',
+        children='OurDAQ - Oszilloskop',
         id='exampleTitle'
     ),
     html.Div([
@@ -115,7 +115,7 @@ app.layout = html.Div([
                         {'label': f'Kanal {i}', 'value': i} for i in range(MCC118_CHANNEL_COUNT)
                     ],
                     labelStyle={'display': 'block'},
-                    value=[0]
+                    value=[2] # Standardmäßig Kanal 2 aktiv
                 ),
                 html.Button(
                     children='Konfigurieren',
@@ -528,10 +528,10 @@ def update_strip_chart(chart_data_json_str: str, active_channels: List[int]) -> 
         'data': plot_data,
         'layout': go.Layout(
             xaxis=dict(title='Samples', range=xaxis_range),
-            yaxis=dict(title='Spannung'),
+            yaxis=dict(title='Spannung (V)'),
             margin={'l': 40, 'r': 40, 't': 50, 'b': 40, 'pad': 0},
             showlegend=True,
-            title='Strip Chart'
+            title='Messwerte'
         )
     }
 
