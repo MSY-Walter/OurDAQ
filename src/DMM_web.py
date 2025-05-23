@@ -2,23 +2,19 @@
 """
 Web-basierter Digitaler Multimeter für MCC 118 mit Dash
 Ein LabVIEW-ähnlicher DMM als Webanwendung mit Dash/Plotly
-Mit Überlastungswarnung, Echtzeitdiagramm und CSV-Download
-Performance-optimiert für flüssige Bedienung
+Mit Echtzeitdiagramm und CSV-Download
+Performance-optimiert für Raspberry Pi 5
 """
 
 import dash
-from dash import dcc, html, Input, Output, State, callback_context
+from dash import dcc, html, Input, Output, State, callback_context, no_update
 import plotly.graph_objs as go
-import plotly.express as px
 import pandas as pd
-import numpy as np
 import time
-import csv
-import io
-import base64
 from datetime import datetime
 import threading
 from collections import deque
+import os
 from daqhats import mcc118, OptionFlags, HatError
 
 class DashDMM:
@@ -26,27 +22,35 @@ class DashDMM:
         self.hat = None
         self.init_mcc118()
         
-        self.modus = "Spannung DC"
-        self.bereich = 10.0
+        self.modus = "DC Spannung"  # Standardmodus
+        self.bereich = 10.0  # MCC 118 fester Bereich ±10V
         self.channel = 0
-        self.datenerfassung_aktiv = False
+        self.measuring = False  # Kontinuierliche Messung für Display
+        self.recording = False  # Datenaufzeichnung für Chart
+        self.paused = False
         self.messdaten = []
-        self.ueberlast_status = False
         
-        # Für Echtzeitdiagramm - reduzierte Datenpunkte für bessere Performance
-        self.max_punkte = 50  # Reduziert von 100
+        # Einheiten für verschiedene Modi
+        self.mode_units = {
+            "DC Spannung": "V DC",
+            "AC Spannung": "V AC", 
+            "DC Strom": "A DC",
+            "AC Strom": "A AC"
+        }
+        
+        # Für Echtzeitdiagramm - optimiert für Pi 5
+        self.max_punkte = 30  # Reduziert für bessere Performance
         self.zeit_daten = deque(maxlen=self.max_punkte)
         self.wert_daten = deque(maxlen=self.max_punkte)
         self.start_zeit = time.time()
         
-        # Cached Messwerte für UI Updates
+        # Cached Messwerte
         self.display_cache = {
             'wert': 0.0,
-            'ueberlast': False,
             'timestamp': time.time()
         }
         
-        # Measurement Thread mit weniger häufigen Updates
+        # Measurement Thread
         self.measurement_thread = None
         self.running = False
         self.lock = threading.Lock()
@@ -60,60 +64,66 @@ class DashDMM:
             print(f"Fehler beim Initialisieren des MCC 118: {str(e)}")
             self.hat = None
     
-    def get_dezimalstellen(self, bereich):
-        """Berechnet die Anzahl der Dezimalstellen basierend auf dem Messbereich"""
-        if bereich >= 10.0:
-            return 3
-        elif bereich >= 1.0:
-            return 4
-        elif bereich >= 0.5:
-            return 5
-        else:  # 200mV Bereich
-            return 6
-    
     def start_measurement(self):
-        """Startet die kontinuierliche Messung"""
+        """Startet die kontinuierliche Messung für Display"""
         if not self.running:
             self.running = True
+            self.measuring = True
             self.measurement_thread = threading.Thread(target=self._measurement_loop)
             self.measurement_thread.daemon = True
             self.measurement_thread.start()
     
     def stop_measurement(self):
-        """Stoppt die kontinuierliche Messung"""
+        """Stoppt alle Messungen"""
         self.running = False
+        self.measuring = False
+        self.recording = False
         if self.measurement_thread:
             self.measurement_thread.join(timeout=1)
     
+    def start_recording(self):
+        """Startet die Datenaufzeichnung"""
+        with self.lock:
+            self.recording = True
+            self.paused = False
+            self.messdaten = []
+            self.zeit_daten.clear()
+            self.wert_daten.clear()
+            self.start_zeit = time.time()
+    
+    def pause_recording(self):
+        """Pausiert die Datenaufzeichnung"""
+        self.paused = True
+    
+    def resume_recording(self):
+        """Setzt die Datenaufzeichnung fort"""
+        self.paused = False
+    
+    def stop_recording(self):
+        """Stoppt die Datenaufzeichnung"""
+        self.recording = False
+        self.paused = False
+    
     def _measurement_loop(self):
-        """Hauptschleife für kontinuierliche Messungen - optimiert für Performance"""
-        measurement_count = 0
+        """Hauptschleife für kontinuierliche Messungen"""
         while self.running:
             try:
                 if self.hat:
                     wert = self.hat.a_in_read(self.channel, OptionFlags.DEFAULT)
                 else:
-                    # Simulationsmodus für Tests ohne Hardware
+                    # Simulation für Tests
                     import random
-                    wert = random.uniform(-self.bereich, self.bereich) * 0.1
+                    wert = random.uniform(-5, 5)
                 
-                ueberlast = abs(wert) > self.bereich
-                
-                # Update Cache für Display (weniger Lock-Verwendung)
+                # Update Display Cache
                 with self.lock:
                     self.display_cache.update({
                         'wert': wert,
-                        'ueberlast': ueberlast,
                         'timestamp': time.time()
                     })
-                    
-                    # Überlast-Status nur bei Änderung aktualisieren
-                    if ueberlast != self.ueberlast_status:
-                        self.ueberlast_status = ueberlast
                 
-                # Datenerfassung nur alle 2. Messung für bessere Performance
-                measurement_count += 1
-                if self.datenerfassung_aktiv and measurement_count % 2 == 0:
+                # Datenaufzeichnung nur wenn aktiv und nicht pausiert
+                if self.recording and not self.paused:
                     with self.lock:
                         aktuelle_zeit = time.time() - self.start_zeit
                         self.zeit_daten.append(aktuelle_zeit)
@@ -124,15 +134,14 @@ class DashDMM:
                             'Zeit': zeit_str,
                             'Wert': wert,
                             'Modus': self.modus,
-                            'Kanal': self.channel,
-                            'Bereich': self.bereich
+                            'Kanal': self.channel
                         })
                 
-                time.sleep(0.2)  # Erhöht von 0.1s auf 0.2s für bessere Performance
+                time.sleep(0.1)  # 10Hz für gute Responsivität
                 
             except Exception as e:
                 print(f"Fehler in Messschleife: {e}")
-                time.sleep(0.2)
+                time.sleep(0.1)
     
     def get_display_data(self):
         """Thread-safe Zugriff auf Display-Daten"""
@@ -142,7 +151,7 @@ class DashDMM:
     def get_chart_data(self):
         """Thread-safe Zugriff auf Chart-Daten"""
         with self.lock:
-            if self.datenerfassung_aktiv and len(self.zeit_daten) > 0:
+            if self.recording and len(self.zeit_daten) > 0:
                 return list(self.zeit_daten), list(self.wert_daten)
             return [], []
 
@@ -150,7 +159,7 @@ class DashDMM:
 dmm = DashDMM()
 
 # Dash App initialisieren
-app = dash.Dash(__name__, suppress_callback_exceptions=True)
+app = dash.Dash(__name__)
 app.title = "OurDAQ - Web Digitalmultimeter"
 
 # Layout der App
@@ -161,7 +170,8 @@ app.layout = html.Div([
                 style={'textAlign': 'center', 'color': '#333', 'marginBottom': '20px'}),
         html.Div(id='connection-status', 
                 style={'textAlign': 'center', 'padding': '5px', 'borderRadius': '3px',
-                       'backgroundColor': '#4CAF50', 'color': 'white', 'fontWeight': 'bold',
+                       'backgroundColor': '#4CAF50' if dmm.hat else '#FF9800', 
+                       'color': 'white', 'fontWeight': 'bold',
                        'fontSize': '12px', 'marginBottom': '20px'},
                 children='MCC 118 Verbunden' if dmm.hat else 'Simulation Modus')
     ], style={'marginBottom': '30px'}),
@@ -169,120 +179,75 @@ app.layout = html.Div([
     # Messwert Display
     html.Div([
         html.Div(id='measurement-display',
-                style={'backgroundColor': '#000', 'color': '#00d2d2', 'padding': '30px',
+                style={'backgroundColor': '#000', 'color': '#00d2d2', 'padding': '40px',
                        'borderRadius': '10px', 'textAlign': 'center', 'minHeight': '120px',
-                       'fontSize': '48px', 'fontWeight': 'bold', 'fontFamily': 'Courier New',
-                       'marginBottom': '20px'},
-                children='0.000 V DC'),
-        
-        # Progress Bar
-        html.Div([
-            html.Div(id='progress-bar',
-                    style={'width': '100%', 'height': '15px', 'backgroundColor': 'transparent',
-                           'border': '1px solid #00d2d2', 'position': 'relative'}),
-            html.Div('% FS', style={'textAlign': 'center', 'color': '#00d2d2', 'fontSize': '12px'})
-        ], style={'marginBottom': '20px'})
+                       'fontSize': '56px', 'fontWeight': 'bold', 'fontFamily': 'Courier New',
+                       'marginBottom': '20px', 'border': '2px solid #00d2d2'},
+                children='0.000000 V DC'),
+        html.Div('Messbereich: ±10V (MCC 118 Maximum)', 
+                style={'textAlign': 'center', 'color': '#666', 'fontSize': '14px',
+                       'marginBottom': '20px'})
     ]),
     
     # Steuerungsbereich
     html.Div([
-        # Messmodus
+        # Messmodus-Auswahl
         html.Div([
             html.H3("Messmodus", style={'fontWeight': 'bold', 'color': '#333'}),
-            html.Div([
-                html.Button('DC Spannung (V)', id='dc-voltage-btn', n_clicks=0,
-                           style={'backgroundColor': '#c0e0ff', 'border': '2px solid #4080ff',
-                                  'borderRadius': '5px', 'padding': '12px', 'fontWeight': 'bold',
-                                  'margin': '5px', 'cursor': 'pointer'}),
-                html.Button('AC Spannung (V)', id='ac-voltage-btn', n_clicks=0, disabled=True,
-                           style={'backgroundColor': '#e0e0e0', 'border': '1px solid #a0a0a0',
-                                  'borderRadius': '5px', 'padding': '12px', 'fontWeight': 'bold',
-                                  'margin': '5px', 'cursor': 'not-allowed', 'color': '#999'}),
-                html.Button('DC Strom (A)', id='dc-current-btn', n_clicks=0, disabled=True,
-                           style={'backgroundColor': '#e0e0e0', 'border': '1px solid #a0a0a0',
-                                  'borderRadius': '5px', 'padding': '12px', 'fontWeight': 'bold',
-                                  'margin': '5px', 'cursor': 'not-allowed', 'color': '#999'}),
-                html.Button('AC Strom (A)', id='ac-current-btn', n_clicks=0, disabled=True,
-                           style={'backgroundColor': '#e0e0e0', 'border': '1px solid #a0a0a0',
-                                  'borderRadius': '5px', 'padding': '12px', 'fontWeight': 'bold',
-                                  'margin': '5px', 'cursor': 'not-allowed', 'color': '#999'})
-            ], style={'display': 'grid', 'gridTemplateColumns': '1fr 1fr', 'gap': '10px'})
+            dcc.RadioItems(
+                id='mode-selector',
+                options=[
+                    {'label': 'DC Spannung', 'value': 'DC Spannung'},
+                    {'label': 'AC Spannung', 'value': 'AC Spannung'},
+                    {'label': 'DC Strom', 'value': 'DC Strom'},
+                    {'label': 'AC Strom', 'value': 'AC Strom'}
+                ],
+                value='DC Spannung',
+                style={'marginBottom': '15px'},
+                labelStyle={'display': 'block', 'marginBottom': '8px'}
+            )
         ], style={'backgroundColor': '#f8f8f8', 'padding': '15px', 'borderRadius': '8px',
-                  'border': '1px solid #ddd', 'marginBottom': '15px'}),
+                  'border': '1px solid #ddd', 'marginBottom': '15px', 'width': '48%', 'display': 'inline-block'}),
         
-        # Messbereich und Kanal
+        # Kanal-Auswahl
         html.Div([
-            html.Div([
-                html.H3("Messbereich", style={'fontWeight': 'bold', 'color': '#333'}),
-                dcc.Dropdown(
-                    id='range-dropdown',
-                    options=[
-                        {'label': '±10V', 'value': '±10V'},
-                        {'label': '±2V', 'value': '±2V'},
-                        {'label': '±1V', 'value': '±1V'},
-                        {'label': '±500mV', 'value': '±500mV'},
-                        {'label': '±200mV', 'value': '±200mV'}
-                    ],
-                    value='±10V',
-                    style={'marginBottom': '15px'}
-                )
-            ], style={'width': '48%', 'display': 'inline-block'}),
-            
-            html.Div([
-                html.H3("Kanal", style={'fontWeight': 'bold', 'color': '#333'}),
-                dcc.Dropdown(
-                    id='channel-dropdown',
-                    options=[{'label': f'Kanal {i}', 'value': i} for i in range(8)],
-                    value=0,
-                    style={'marginBottom': '15px'}
-                )
-            ], style={'width': '48%', 'float': 'right', 'display': 'inline-block'})
+            html.H3("Kanal", style={'fontWeight': 'bold', 'color': '#333'}),
+            dcc.Dropdown(
+                id='channel-dropdown',
+                options=[{'label': f'Kanal {i}', 'value': i} for i in range(8)],
+                value=0,
+                style={'marginBottom': '15px'}
+            ),
+            # Hinweise für verschiedene Modi
+            html.Div(id='mode-info', 
+                    style={'fontSize': '12px', 'color': '#666', 'marginTop': '10px'})
         ], style={'backgroundColor': '#f8f8f8', 'padding': '15px', 'borderRadius': '8px',
-                  'border': '1px solid #ddd', 'marginBottom': '15px'}),
-        
-        # Banana Jacks Visualisierung
-        html.Div([
-            html.H3("Anschlüsse", style={'fontWeight': 'bold', 'color': '#333', 'textAlign': 'center'}),
-            html.Div([
-                html.Div([
-                    html.Div(style={'width': '20px', 'height': '20px', 'borderRadius': '50%',
-                                   'backgroundColor': '#ff0000', 'margin': '0 auto'}),
-                    html.Div('V', style={'textAlign': 'center', 'fontWeight': 'bold'})
-                ], style={'display': 'inline-block', 'margin': '0 20px'}),
-                html.Div([
-                    html.Div(style={'width': '20px', 'height': '20px', 'borderRadius': '50%',
-                                   'backgroundColor': '#333', 'margin': '0 auto'}),
-                    html.Div('COM', style={'textAlign': 'center', 'fontWeight': 'bold'})
-                ], style={'display': 'inline-block', 'margin': '0 20px'}),
-                html.Div([
-                    html.Div(style={'width': '20px', 'height': '20px', 'borderRadius': '50%',
-                                   'backgroundColor': '#ff0000', 'margin': '0 auto'}),
-                    html.Div('A', style={'textAlign': 'center', 'fontWeight': 'bold'})
-                ], style={'display': 'inline-block', 'margin': '0 20px'})
-            ], style={'textAlign': 'center', 'padding': '20px'})
-        ], style={'backgroundColor': '#f8f8f8', 'padding': '15px', 'borderRadius': '8px',
-                  'border': '1px solid #ddd', 'marginBottom': '15px'})
-    ], style={'display': 'grid', 'gridTemplateColumns': '2fr 1fr 1fr', 'gap': '20px', 'marginBottom': '20px'}),
+                  'border': '1px solid #ddd', 'marginBottom': '15px', 'width': '48%', 'float': 'right'})
+    ], style={'overflow': 'hidden'}),
     
     # Action Buttons
     html.Div([
-        html.Button('Aufnahme starten', id='start-btn', n_clicks=0,
-                   style={'backgroundColor': 'darkgreen', 'color': 'white', 'border': 'none',
+        html.Button('Messung konfigurieren', id='config-btn', n_clicks=0,
+                   style={'backgroundColor': '#2196F3', 'color': 'white', 'border': 'none',
                           'padding': '12px 24px', 'borderRadius': '5px', 'fontWeight': 'bold',
                           'cursor': 'pointer', 'fontSize': '14px', 'margin': '5px'}),
-        html.Button('Aufnahme stoppen', id='stop-btn', n_clicks=0, disabled=True,
-                   style={'backgroundColor': 'darkred', 'color': 'white', 'border': 'none',
+        html.Button('Aufzeichnung starten', id='start-record-btn', n_clicks=0, disabled=True,
+                   style={'backgroundColor': '#4CAF50', 'color': 'white', 'border': 'none',
                           'padding': '12px 24px', 'borderRadius': '5px', 'fontWeight': 'bold',
                           'cursor': 'pointer', 'fontSize': '14px', 'margin': '5px'}),
-        html.Button('CSV speichern', id='csv-btn', n_clicks=0,
-                   style={'backgroundColor': '#f0f0f0', 'color': '#333', 'border': '1px solid #a0a0a0',
+        html.Button('Pausieren', id='pause-btn', n_clicks=0, disabled=True,
+                   style={'backgroundColor': '#FF9800', 'color': 'white', 'border': 'none',
                           'padding': '12px 24px', 'borderRadius': '5px', 'fontWeight': 'bold',
                           'cursor': 'pointer', 'fontSize': '14px', 'margin': '5px'}),
-        html.Button('Hilfe', id='help-btn', n_clicks=0,
-                   style={'backgroundColor': '#f0f0f0', 'color': '#333', 'border': '1px solid #a0a0a0',
+        html.Button('Stoppen', id='stop-record-btn', n_clicks=0, disabled=True,
+                   style={'backgroundColor': '#F44336', 'color': 'white', 'border': 'none',
+                          'padding': '12px 24px', 'borderRadius': '5px', 'fontWeight': 'bold',
+                          'cursor': 'pointer', 'fontSize': '14px', 'margin': '5px'}),
+        html.Button('CSV speichern', id='csv-btn', n_clicks=0, disabled=True,
+                   style={'backgroundColor': '#607D8B', 'color': 'white', 'border': 'none',
                           'padding': '12px 24px', 'borderRadius': '5px', 'fontWeight': 'bold',
                           'cursor': 'pointer', 'fontSize': '14px', 'margin': '5px'})
-    ], style={'display': 'flex', 'gap': '15px', 'marginBottom': '20px', 'flexWrap': 'wrap'}),
+    ], style={'display': 'flex', 'gap': '10px', 'marginBottom': '20px', 'flexWrap': 'wrap'}),
     
     # Diagramm
     html.Div([
@@ -295,171 +260,234 @@ app.layout = html.Div([
     html.Div(id='status-bar',
             style={'backgroundColor': '#333', 'color': 'white', 'padding': '10px',
                    'borderRadius': '5px', 'fontWeight': 'bold'},
-            children='Bereit - Keine Datenaufnahme aktiv'),
+            children='Bereit - Klicken Sie "Messung konfigurieren" zum Starten'),
     
-    # Hidden divs for data storage
-    html.Div(id='hidden-div', style={'display': 'none'}),
+    # Speicher-Dialog
+    html.Div(id='save-dialog', style={'display': 'none'}),
     
-    # Interval für Updates - weniger häufig für bessere Performance
-    dcc.Interval(id='interval-component', interval=300, n_intervals=0),  # 300ms statt 100ms
-    dcc.Interval(id='chart-interval', interval=500, n_intervals=0),      # Separates Intervall für Chart
+    # Interval für Updates - optimiert für Pi 5
+    dcc.Interval(id='display-interval', interval=200, n_intervals=0, disabled=True),  # 5Hz Display
+    dcc.Interval(id='chart-interval', interval=500, n_intervals=0, disabled=True),    # 2Hz Chart
     
     # Download component
     dcc.Download(id="download-csv")
 ])
 
-# Optimierte Callbacks - getrennte Intervalle für bessere Performance
-
 @app.callback(
     [Output('measurement-display', 'children'),
-     Output('measurement-display', 'style'),
-     Output('progress-bar', 'children')],
-    [Input('interval-component', 'n_intervals')]
+     Output('display-interval', 'disabled'),
+     Output('mode-info', 'children')],
+    [Input('config-btn', 'n_clicks'),
+     Input('display-interval', 'n_intervals'),
+     Input('channel-dropdown', 'value'),
+     Input('mode-selector', 'value')]
 )
-def update_display(n):
-    # Verwendung der Cache-Funktion statt direktem Lock-Zugriff
-    display_data = dmm.get_display_data()
-    wert = display_data['wert']
-    ueberlast = display_data['ueberlast']
-    bereich = dmm.bereich
+def update_display(config_clicks, n_intervals, channel, mode):
+    ctx = callback_context
     
-    dezimalstellen = dmm.get_dezimalstellen(bereich)
+    if not ctx.triggered:
+        return no_update, True, no_update
     
-    if ueberlast:
-        display_text = "ÜBERLAST!"
-        display_style = {
-            'backgroundColor': '#000', 'color': '#ff3232', 'padding': '30px',
-            'borderRadius': '10px', 'textAlign': 'center', 'minHeight': '120px',
-            'fontSize': '48px', 'fontWeight': 'bold', 'fontFamily': 'Courier New',
-            'marginBottom': '20px', 'animation': 'blink 1s infinite'
-        }
-        progress_percent = 100
-        progress_color = '#ff3232'
-    else:
-        einheit = 'V DC' if 'Spannung' in dmm.modus else 'A DC'
-        format_string = f"{{:.{dezimalstellen}f}} {einheit}"
-        display_text = format_string.format(wert)
-        display_style = {
-            'backgroundColor': '#000', 'color': '#00d2d2', 'padding': '30px',
-            'borderRadius': '10px', 'textAlign': 'center', 'minHeight': '120px',
-            'fontSize': '48px', 'fontWeight': 'bold', 'fontFamily': 'Courier New',
-            'marginBottom': '20px'
-        }
-        progress_percent = min(max(0, abs(wert) / bereich), 1.0) * 100
-        progress_color = '#00d2d2'
+    trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
-    progress_bar = html.Div(
-        style={'width': f'{progress_percent}%', 'height': '100%', 
-               'backgroundColor': progress_color, 'transition': 'width 0.2s'}
-    )
+    # Hinweis für verschiedene Modi
+    mode_info = ""
+    if mode == "DC Spannung":
+        mode_info = "Direkte Spannungsmessung mit MCC 118"
+    elif mode == "AC Spannung":
+        mode_info = "AC Spannung: Benötigt AC-DC Wandler oder RMS-Berechnung"
+    elif mode == "DC Strom":
+        mode_info = "DC Strom: Benötigt Shunt-Widerstand (V = I × R)"
+    elif mode == "AC Strom":
+        mode_info = "AC Strom: Benötigt Stromwandler oder Shunt + RMS"
     
-    return display_text, display_style, progress_bar
+    # Konfiguration gestartet
+    if trigger_id == 'config-btn' and config_clicks > 0:
+        dmm.channel = channel
+        dmm.modus = mode
+        dmm.start_measurement()
+        unit = dmm.mode_units[mode]
+        return f'0.000000 {unit}', False, mode_info
+    
+    # Modus oder Kanal geändert
+    if trigger_id in ['channel-dropdown', 'mode-selector']:
+        dmm.channel = channel
+        dmm.modus = mode
+        if dmm.measuring:
+            return no_update, False, mode_info
+        return no_update, True, mode_info
+    
+    # Display Update
+    if trigger_id == 'display-interval' and dmm.measuring:
+        display_data = dmm.get_display_data()
+        wert = display_data['wert']
+        
+        # Einheitenberechnung je nach Modus
+        if dmm.modus == "DC Spannung":
+            display_value = wert
+        elif dmm.modus == "AC Spannung":
+            # Vereinfachte AC-Berechnung (RMS für Sinussignal)
+            display_value = abs(wert) * 0.707  # RMS approximation
+        elif dmm.modus == "DC Strom":
+            # Annahme: 1Ω Shunt-Widerstand, I = V/R
+            display_value = wert / 1.0  # A = V / 1Ω
+        elif dmm.modus == "AC Strom":
+            # AC Strom mit RMS
+            display_value = abs(wert) * 0.707 / 1.0  # RMS current
+        
+        unit = dmm.mode_units[dmm.modus]
+        
+        # Dezimalstellen je nach Messgröße
+        if "Strom" in dmm.modus:
+            display_text = f"{display_value:.6f} {unit}"
+        else:
+            display_text = f"{display_value:.6f} {unit}"
+        
+        return display_text, False, mode_info
+    
+    return no_update, no_update, mode_info
 
 @app.callback(
-    Output('measurement-chart', 'figure'),
-    [Input('chart-interval', 'n_intervals')]  # Separates Intervall für Chart
+    [Output('measurement-chart', 'figure')],
+    [Input('chart-interval', 'n_intervals')]
 )
 def update_chart(n):
-    # Verwendung der Cache-Funktion für bessere Performance
-    x_data, y_data = dmm.get_chart_data()
-    
-    einheit = 'Spannung (V)' if 'Spannung' in dmm.modus else 'Strom (A)'
-    
-    fig = go.Figure()
-    
-    if x_data and y_data:
-        fig.add_trace(go.Scatter(
-            x=x_data,
-            y=y_data,
-            mode='lines',
-            name=einheit,
-            line=dict(color='#00d2d2', width=3)
-        ))
-    
-    fig.update_layout(
-        title='Messwert-Verlauf',
-        xaxis_title='Zeit (s)',
-        yaxis_title=einheit,
-        showlegend=False,
-        plot_bgcolor='white',
-        paper_bgcolor='white',
-        margin=dict(l=50, r=50, t=50, b=50)
-    )
-    
-    if not dmm.datenerfassung_aktiv:
+    if not dmm.recording:
+        # Leeres Chart wenn keine Aufzeichnung
+        fig = go.Figure()
+        fig.update_layout(
+            title='Messwert-Verlauf',
+            xaxis_title='Zeit (s)',
+            yaxis_title='Spannung (V)',
+            showlegend=False,
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            margin=dict(l=50, r=50, t=50, b=50)
+        )
         fig.add_annotation(
-            text="Diagramm wird angezeigt, wenn Datenaufnahme aktiviert ist",
+            text="Starten Sie die Aufzeichnung für Diagramm-Anzeige",
             xref="paper", yref="paper",
             x=0.5, y=0.5, xanchor='center', yanchor='middle',
             showarrow=False,
             font=dict(size=16, color="gray")
         )
+        return [fig]
     
-    return fig
+    x_data, y_data = dmm.get_chart_data()
+    
+    fig = go.Figure()
+    
+    if x_data and y_data:
+        # Datenkonvertierung je nach Modus
+        converted_y_data = []
+        for wert in y_data:
+            if dmm.modus == "DC Spannung":
+                converted_y_data.append(wert)
+            elif dmm.modus == "AC Spannung":
+                converted_y_data.append(abs(wert) * 0.707)
+            elif dmm.modus == "DC Strom":
+                converted_y_data.append(wert / 1.0)  # 1Ω Shunt
+            elif dmm.modus == "AC Strom":
+                converted_y_data.append(abs(wert) * 0.707 / 1.0)
+        
+        fig.add_trace(go.Scatter(
+            x=x_data,
+            y=converted_y_data,
+            mode='lines+markers',
+            name=dmm.modus,
+            line=dict(color='#00d2d2', width=2),
+            marker=dict(size=4)
+        ))
+        
+        # Automatische Y-Achsen-Skalierung
+        if converted_y_data:
+            y_min = min(converted_y_data)
+            y_max = max(converted_y_data)
+            y_range = y_max - y_min
+            
+            if y_range < 0.1:
+                y_range = 0.1
+            
+            margin = y_range * 0.1
+            y_axis_range = [y_min - margin, y_max + margin]
+            
+            # Begrenzung je nach Messmodus
+            if "Spannung" in dmm.modus:
+                y_axis_range[0] = max(y_axis_range[0], -10.5)
+                y_axis_range[1] = min(y_axis_range[1], 10.5)
+            else:  # Strom
+                y_axis_range[0] = max(y_axis_range[0], -10.5)  # 10A max bei 1Ω Shunt
+                y_axis_range[1] = min(y_axis_range[1], 10.5)
+        else:
+            y_axis_range = [-1, 1]
+    else:
+        y_axis_range = [-1, 1]
+    
+    # Y-Achsen-Beschriftung je nach Modus
+    if "Spannung" in dmm.modus:
+        y_title = "Spannung (V)"
+    else:
+        y_title = "Strom (A)"
+    
+    fig.update_layout(
+        title=f'{dmm.modus}-Verlauf (Kanal {dmm.channel})',
+        xaxis_title='Zeit (s)',
+        yaxis_title=y_title,
+        showlegend=False,
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        margin=dict(l=50, r=50, t=50, b=50),
+        yaxis=dict(range=y_axis_range)
+    )
+    
+    return [fig]
 
-# Callback für Steuerung - weniger häufige Triggerung
 @app.callback(
-    [Output('start-btn', 'disabled'),
-     Output('stop-btn', 'disabled'),
-     Output('status-bar', 'children')],
-    [Input('start-btn', 'n_clicks'),
-     Input('stop-btn', 'n_clicks'),
-     Input('range-dropdown', 'value'),
-     Input('channel-dropdown', 'value')],
-    prevent_initial_call=False
+    [Output('start-record-btn', 'disabled'),
+     Output('pause-btn', 'disabled'),
+     Output('stop-record-btn', 'disabled'),
+     Output('csv-btn', 'disabled'),
+     Output('pause-btn', 'children'),
+     Output('status-bar', 'children'),
+     Output('chart-interval', 'disabled')],  # 添加chart-interval控制
+    [Input('config-btn', 'n_clicks'),
+     Input('start-record-btn', 'n_clicks'),
+     Input('pause-btn', 'n_clicks'),
+     Input('stop-record-btn', 'n_clicks')]
 )
-def update_recording_state(start_clicks, stop_clicks, range_val, channel_val):
+def update_controls(config_clicks, start_clicks, pause_clicks, stop_clicks):
     ctx = callback_context
     
     if not ctx.triggered:
-        return False, True, 'Bereit - Keine Datenaufnahme aktiv'
+        return True, True, True, True, 'Pausieren', 'Bereit - Klicken Sie "Messung konfigurieren" zum Starten', True
     
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
-    # Bereich oder Kanal geändert
-    if trigger_id in ['range-dropdown', 'channel-dropdown']:
-        # Bereich parsen
-        bereich_text = range_val.replace("±", "")
-        if "mV" in bereich_text:
-            dmm.bereich = float(bereich_text.replace("mV", "")) / 1000.0
-        else:
-            dmm.bereich = float(bereich_text.replace("V", ""))
-        
-        dmm.channel = channel_val
-        
-        # Daten zurücksetzen
-        with dmm.lock:
-            dmm.zeit_daten.clear()
-            dmm.wert_daten.clear()
-            dmm.messdaten = []
-            dmm.start_zeit = time.time()
-        
-        if dmm.datenerfassung_aktiv:
-            return True, False, f'Datenaufnahme für {dmm.modus} aktiv - Bereich/Kanal geändert'
-        else:
-            return False, True, 'Bereit - Keine Datenaufnahme aktiv'
+    # Konfiguration
+    if trigger_id == 'config-btn' and config_clicks > 0:
+        return False, True, True, True, 'Pausieren', f'Messung aktiv - Kanal {dmm.channel} - Bereit für Aufzeichnung', True
     
-    # Start Button
-    if trigger_id == 'start-btn' and start_clicks > 0:
-        dmm.datenerfassung_aktiv = True
-        with dmm.lock:
-            dmm.messdaten = []
-            dmm.zeit_daten.clear()
-            dmm.wert_daten.clear()
-            dmm.start_zeit = time.time()
-        return True, False, f'Datenaufnahme für {dmm.modus} gestartet'
+    # Aufzeichnung starten
+    if trigger_id == 'start-record-btn' and start_clicks > 0:
+        dmm.start_recording()
+        return True, False, False, True, 'Pausieren', f'Aufzeichnung läuft - Kanal {dmm.channel}', False  # Chart aktivieren
     
-    # Stop Button
-    if trigger_id == 'stop-btn' and stop_clicks > 0:
-        dmm.datenerfassung_aktiv = False
+    # Pausieren/Fortsetzen
+    if trigger_id == 'pause-btn' and pause_clicks > 0:
+        if dmm.paused:
+            dmm.resume_recording()
+            return True, False, False, True, 'Pausieren', f'Aufzeichnung fortgesetzt - Kanal {dmm.channel}', False
+        else:
+            dmm.pause_recording()
+            return True, False, False, True, 'Fortsetzen', f'Aufzeichnung pausiert - Kanal {dmm.channel}', False
+    
+    # Stoppen
+    if trigger_id == 'stop-record-btn' and stop_clicks > 0:
+        dmm.stop_recording()
         count = len(dmm.messdaten)
-        return False, True, f'Datenaufnahme gestoppt - {count} Messpunkte aufgezeichnet'
+        return False, True, True, False, 'Pausieren', f'Aufzeichnung gestoppt - {count} Messpunkte - Bereit zum Speichern', True  # Chart deaktivieren
     
-    # Default state
-    if dmm.datenerfassung_aktiv:
-        return True, False, f'Datenaufnahme für {dmm.modus} aktiv'
-    else:
-        return False, True, 'Bereit - Keine Datenaufnahme aktiv'
+    return no_update, no_update, no_update, no_update, no_update, no_update, no_update
 
 @app.callback(
     Output("download-csv", "data"),
@@ -470,48 +498,20 @@ def download_csv(n_clicks):
     if n_clicks and dmm.messdaten:
         df = pd.DataFrame(dmm.messdaten)
         
-        filename = f"Messdaten_{dmm.modus.replace(' ', '_')}_Kanal{dmm.channel}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        # Standardpfad für Downloads
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"OurDAQ_Messdaten_Kanal{dmm.channel}_{timestamp}.csv"
         
         return dcc.send_data_frame(df.to_csv, filename, index=False)
     
-    return None
-
-@app.callback(
-    Output('hidden-div', 'children'),
-    [Input('help-btn', 'n_clicks')],
-    prevent_initial_call=True
-)
-def show_help(n_clicks):
-    if n_clicks:
-        print("""
-        Digitaler Multimeter für MCC 118
-
-        Bedienung:
-        1. Wählen Sie den Messmodus (derzeit nur DC Spannung)
-        2. Wählen Sie den Messbereich (±10V, ±2V, ±1V, ±500mV, ±200mV)
-        3. Wählen Sie den Kanal (Kanal 0 bis Kanal 7)
-        4. Klicken Sie 'Aufnahme starten', um Messwerte aufzuzeichnen
-        5. Klicken Sie 'Aufnahme stoppen', um die Aufzeichnung zu beenden
-
-        Performance-Optimierungen:
-        - Display-Updates alle 300ms für flüssige Bedienung
-        - Chart-Updates alle 500ms für bessere Performance
-        - Reduzierte Datenpunkte für schnellere Darstellung
-
-        Hinweise:
-        - Überlast wird angezeigt, wenn die Spannung den Messbereich überschreitet
-        - Der MCC 118 misst Spannungen bis ±10 V
-        - Die Anzeige aktualisiert sich in Echtzeit
-        """)
-    
-    return ""
+    return no_update
 
 # Server starten
 if __name__ == '__main__':
-    # Messung starten
-    dmm.start_measurement()
-    
     try:
-        app.run(debug=False, host='0.0.0.0', port=8050)  # Debug=False für bessere Performance
+        # Für Dash 2.x verwenden wir run() ohne run_server()
+        app.run(debug=False, host='0.0.0.0', port=8050, 
+                dev_tools_hot_reload=False,  # Deaktiviert für bessere Performance
+                threaded=True)
     finally:
         dmm.stop_measurement()
