@@ -13,42 +13,46 @@ TRIANGLE_WAVE = 0x2002  # Dreieckswelle
 SQUARE_WAVE = 0x2028    # Rechteckwelle
 
 # SPI Einstellungen
-spi_bus = 0
-spi_device = 0
-spi_frequency = 1000000  # 1 MHz
+SPI_BUS = 0
+SPI_DEVICE = 0
+SPI_FREQUENCY = 1000000  # 1 MHz
 
 # FSYNC Pin (Chip Select)
-FSYNC = 25  # GPIO-Pin für FSYNC
+FSYNC_PIN = 25  # GPIO-Pin für FSYNC
 
-# Initialisierung
+# Frequenz-Konstanten
+FMCLK = 25000000  # 25 MHz Standardtaktfrequenz
+MAX_FREQUENCY = 20000  # Maximale Ausgangsfrequenz: 20 kHz
+MIN_FREQUENCY = 0.1    # Minimale Ausgangsfrequenz: 0.1 Hz
+
 def init_AD9833():
+    """Initialisiert GPIO und SPI für AD9833"""
     # GPIO initialisieren
     GPIO.setmode(GPIO.BCM)
-    GPIO.setup(FSYNC, GPIO.OUT)
-    GPIO.output(FSYNC, GPIO.HIGH)
+    GPIO.setup(FSYNC_PIN, GPIO.OUT)
+    GPIO.output(FSYNC_PIN, GPIO.HIGH)
     
     # SPI initialisieren
     global spi
     spi = spidev.SpiDev()
-    spi.open(spi_bus, spi_device)
-    spi.max_speed_hz = spi_frequency
+    spi.open(SPI_BUS, SPI_DEVICE)
+    spi.max_speed_hz = SPI_FREQUENCY
     spi.mode = 0b10  # SPI Modus 2
     
     # Reset des AD9833
     write_to_AD9833(0x2100)
     time.sleep(0.1)
 
-# Daten an AD9833 senden
 def write_to_AD9833(data):
-    GPIO.output(FSYNC, GPIO.LOW)
+    """Sendet 16-Bit Daten an AD9833"""
+    GPIO.output(FSYNC_PIN, GPIO.LOW)
     spi.xfer2([data >> 8, data & 0xFF])
-    GPIO.output(FSYNC, GPIO.HIGH)
+    GPIO.output(FSYNC_PIN, GPIO.HIGH)
 
-# Frequenz einstellen (in Hz)
 def set_frequency(freq):
+    """Stellt die Ausgangsfrequenz ein (in Hz)"""
     # Berechne Frequenzregister-Wert
-    fMCLK = 25000000  # 25 MHz Standardtaktfrequenz
-    freq_word = int((freq * 2**28) / fMCLK)
+    freq_word = int((freq * 2**28) / FMCLK)
     
     # Reset aktivieren
     write_to_AD9833(0x2100)
@@ -57,67 +61,90 @@ def set_frequency(freq):
     write_to_AD9833(FREQ0_REG | (freq_word & 0x3FFF))
     write_to_AD9833(FREQ0_REG | ((freq_word >> 14) & 0x3FFF))
 
-# Wellenform einstellen
 def set_waveform(waveform):
+    """Stellt die Wellenform ein"""
     write_to_AD9833(waveform)
 
-# Wellenform vom Benutzer erfragen
 def get_waveform_choice():
+    """Erfasst Wellenform-Auswahl vom Benutzer"""
+    wellenformen = {
+        '1': (SINE_WAVE, "Sinuswelle"),
+        '2': (TRIANGLE_WAVE, "Dreieckswelle"), 
+        '3': (SQUARE_WAVE, "Rechteckwelle")
+    }
+    
     while True:
         print("\nWählen Sie die Wellenform:")
         print("1. Sinuswelle")
         print("2. Dreieckswelle")
         print("3. Rechteckwelle")
-        choice = input("Bitte wählen Sie (1-3): ")
         
-        if choice == '1':
-            return SINE_WAVE, "Sinuswelle"
-        elif choice == '2':
-            return TRIANGLE_WAVE, "Dreieckswelle"
-        elif choice == '3':
-            return SQUARE_WAVE, "Rechteckwelle"
+        choice = input("Bitte wählen Sie (1-3): ").strip()
+        
+        if choice in wellenformen:
+            return wellenformen[choice]
         else:
             print("Ungültige Auswahl, bitte versuchen Sie es erneut.")
 
-# Frequenz vom Benutzer erfragen
 def get_frequency():
+    """Erfasst Frequenz vom Benutzer mit Validierung"""
     while True:
         try:
-            freq = float(input("\nBitte geben Sie die Frequenz ein (Hz): "))
-            if 0 < freq <= 12500000:  # AD9833 maximale Frequenz ist ca. 12.5 MHz
+            freq_input = input(f"\nBitte geben Sie die Frequenz ein ({MIN_FREQUENCY} - {MAX_FREQUENCY} Hz): ")
+            freq = float(freq_input)
+            
+            if MIN_FREQUENCY <= freq <= MAX_FREQUENCY:
                 return freq
             else:
-                print("Die Frequenz muss zwischen 0 und 12.500.000 Hz liegen.")
+                print(f"Die Frequenz muss zwischen {MIN_FREQUENCY} und {MAX_FREQUENCY} Hz liegen.")
+                
         except ValueError:
             print("Bitte geben Sie eine gültige Zahl ein.")
 
-# Hauptprogramm
+def cleanup():
+    """Räumt Ressourcen auf"""
+    try:
+        # Gerät zurücksetzen
+        write_to_AD9833(0x2100)
+    except:
+        pass
+    finally:
+        # Ressourcen freigeben
+        GPIO.cleanup()
+        if 'spi' in globals():
+            spi.close()
+
 def main():
+    """Hauptprogramm"""
     try:
         # AD9833 initialisieren
         init_AD9833()
-        print("AD9833 wurde initialisiert.")
+        print("AD9833 wurde erfolgreich initialisiert.")
+        print(f"Frequenzbereich: {MIN_FREQUENCY} Hz - {MAX_FREQUENCY} Hz")
         
         while True:
-            # Vom Benutzer Wellenform und Frequenz erhalten
+            # Benutzerparameter erfassen
             waveform, waveform_name = get_waveform_choice()
             freq = get_frequency()
             
-            # Wellenform und Frequenz einstellen
+            # Konfiguration anwenden
             set_frequency(freq)
             set_waveform(waveform)
             
-            print("Drücken Sie Strg+C zum Beenden.")
+            print(f"\nAktive Konfiguration:")
+            print(f"  Wellenform: {waveform_name}")
+            print(f"  Frequenz: {freq} Hz")
+            print("\nDrücken Sie Enter für neue Konfiguration oder Strg+C zum Beenden...")
+            
             input()  # Warten auf Benutzereingabe
             
     except KeyboardInterrupt:
-        print("\nProgramm wurde beendet.")
+        print("\n\nProgramm wird beendet...")
+    except Exception as e:
+        print(f"\nFehler: {e}")
     finally:
-        # Gerät zurücksetzen vor dem Beenden
-        write_to_AD9833(0x2100)
-        # Ressourcen aufräumen
-        GPIO.cleanup()
-        spi.close()
+        cleanup()
+        print("Ressourcen wurden freigegeben.")
 
 if __name__ == "__main__":
     main()
