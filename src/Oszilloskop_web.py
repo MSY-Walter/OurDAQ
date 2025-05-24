@@ -21,6 +21,39 @@ HAT = None
 MCC118_CHANNEL_COUNT = 8
 ALL_AVAILABLE = -1
 RETURN_IMMEDIATELY = 0
+MCC118_MAX_SAMPLE_RATE = 100000  # Maximale Abtastrate für MCC118
+
+
+def berechne_maximale_abtastrate(anzahl_kanaele: int) -> float:
+    """
+    Berechnet die maximale Abtastrate basierend auf der Anzahl der aktiven Kanäle.
+    
+    Args:
+        anzahl_kanaele: Die Anzahl der aktiven Kanäle.
+        
+    Returns:
+        Die maximale Abtastrate für die gegebene Anzahl von Kanälen.
+    """
+    if anzahl_kanaele <= 0:
+        return MCC118_MAX_SAMPLE_RATE
+    return MCC118_MAX_SAMPLE_RATE / anzahl_kanaele
+
+
+def validiere_abtastrate(abtastrate: float, anzahl_kanaele: int) -> bool:
+    """
+    Validiert, ob die gewünschte Abtastrate für die gegebene Anzahl von Kanälen gültig ist.
+    
+    Args:
+        abtastrate: Die gewünschte Abtastrate.
+        anzahl_kanaele: Die Anzahl der aktiven Kanäle.
+        
+    Returns:
+        True wenn die Abtastrate gültig ist, False sonst.
+    """
+    if anzahl_kanaele <= 0:
+        return False
+    max_rate = berechne_maximale_abtastrate(anzahl_kanaele)
+    return 0 < abtastrate <= max_rate
 
 
 def create_hat_selector() -> dcc.Dropdown:
@@ -55,6 +88,7 @@ def create_hat_selector() -> dcc.Dropdown:
 def init_chart_data(number_of_channels: int, number_of_samples: int) -> str:
     """
     Initialisiert das Diagramm mit der angegebenen Anzahl von Samples.
+    Sample-Zähler wird auf 0 zurückgesetzt.
 
     Args:
         number_of_channels: Die Anzahl der anzuzeigenden Kanäle.
@@ -63,8 +97,8 @@ def init_chart_data(number_of_channels: int, number_of_samples: int) -> str:
     Returns:
         Ein String, der ein JSON-Objekt mit den Diagrammdaten darstellt.
     """
-    samples = list(range(number_of_samples))
-    data = [[None] * number_of_samples for _ in range(number_of_channels)]
+    samples = []  # Leere Liste für neuen Start
+    data = [[] for _ in range(number_of_channels)]  # Leere Listen für alle Kanäle
 
     chart_data = {'data': data, 'samples': samples, 'sample_count': 0}
 
@@ -97,14 +131,17 @@ app.layout = html.Div([
                 html.Label('Abtastrate (Hz)',
                            style={'font-weight': 'bold', 'display': 'block',
                                   'margin-top': 10}),
-                dcc.Input(id='sampleRate', type='number', max=100000.0,
-                          step=1, value=1000.0,
-                          style={'width': 100, 'display': 'block'}),
+                dcc.Input(id='sampleRateInput', type='number', min=1,
+                          max=MCC118_MAX_SAMPLE_RATE, step=1, value=1000,
+                          style={'width': 150, 'display': 'block', 'margin-bottom': 5}),
+                html.Div(id='sampleRateStatus', 
+                        style={'font-size': '12px', 'color': '#666',
+                               'margin-bottom': 10}),
                 html.Label('Anzuzeigende Samples',
                            style={'font-weight': 'bold',
                                   'display': 'block', 'margin-top': 10}),
                 dcc.Input(id='samplesToDisplay', type='number', min=1,
-                          max=1000, step=1, value=100,
+                          max=10000, step=1, value=1000,
                           style={'width': 100, 'display': 'block'}),
                 html.Label('Aktive Kanäle',
                            style={'font-weight': 'bold', 'display': 'block',
@@ -137,7 +174,7 @@ app.layout = html.Div([
     html.Div(
         id='chartData',
         style={'display': 'none'},
-        children=init_chart_data(1, 1000)
+        children=init_chart_data(1, 0)  # Mit 0 Samples für sauberen Start
     ),
     html.Div(
         id='chartInfo',
@@ -152,11 +189,48 @@ app.layout = html.Div([
 
 
 @callback(
+    Output('sampleRateStatus', 'children'),
+    Output('sampleRateStatus', 'style'),
+    Input('sampleRateInput', 'value'),
+    Input('channelSelections', 'value')
+)
+def aktualisiere_abtastrate_status(sample_rate: Optional[float], active_channels: List[int]) -> tuple:
+    """
+    Aktualisiert den Status der Abtastrate und zeigt Validierungsinformationen an.
+    
+    Args:
+        sample_rate: Die eingegebene Abtastrate.
+        active_channels: Eine Liste von Ganzzahlen, die den aktiven Kanälen entspricht.
+        
+    Returns:
+        Tuple mit Statustext und Stil-Dictionary.
+    """
+    if not active_channels:
+        return "Wählen Sie mindestens einen Kanal", {'font-size': '12px', 'color': '#ff6600', 'margin-bottom': '10px'}
+    
+    if sample_rate is None or sample_rate <= 0:
+        return "Ungültige Abtastrate", {'font-size': '12px', 'color': 'red', 'margin-bottom': '10px'}
+    
+    max_rate = berechne_maximale_abtastrate(len(active_channels))
+    max_rate_khz = max_rate / 1000
+    
+    if validiere_abtastrate(sample_rate, len(active_channels)):
+        sample_rate_khz = sample_rate / 1000
+        status_text = f"✓ {sample_rate_khz:g} kHz (Max: {max_rate_khz:g} kHz für {len(active_channels)} Kanal{'e' if len(active_channels) > 1 else ''})"
+        style = {'font-size': '12px', 'color': 'green', 'margin-bottom': '10px'}
+    else:
+        status_text = f"✗ Zu hoch! Max: {max_rate_khz:g} kHz für {len(active_channels)} Kanal{'e' if len(active_channels) > 1 else ''}"
+        style = {'font-size': '12px', 'color': 'red', 'margin-bottom': '10px'}
+    
+    return status_text, style
+
+
+@callback(
     Output('status', 'children'),
     Input('startStopButton', 'n_clicks'),
     State('startStopButton', 'children'),
     State('hatSelector', 'value'),
-    State('sampleRate', 'value'),
+    State('sampleRateInput', 'value'),
     State('samplesToDisplay', 'value'),
     State('channelSelections', 'value')
 )
@@ -164,7 +238,7 @@ def start_stop_click(
     n_clicks: Optional[int], 
     button_label: str, 
     hat_descriptor_json_str: str,
-    sample_rate_val: float, 
+    sample_rate: Optional[float], 
     samples_to_display: int, 
     active_channels: List[int]
 ) -> str:
@@ -177,7 +251,7 @@ def start_stop_click(
         button_label: Das aktuelle Label auf der Schaltfläche.
         hat_descriptor_json_str: Eine Zeichenfolge, die ein JSON-Objekt darstellt
             und den Deskriptor für das ausgewählte MCC 118 DAQ HAT enthält.
-        sample_rate_val: Der vom Benutzer angegebene Abtastratenwert.
+        sample_rate: Die manuell eingegebene Abtastrate.
         samples_to_display: Die Anzahl der anzuzeigenden Samples.
         active_channels: Eine Liste von Ganzzahlen, die den vom Benutzer
             ausgewählten aktiven Kanälen entsprechen.
@@ -188,9 +262,10 @@ def start_stop_click(
     output = 'idle'
     if n_clicks is not None and n_clicks > 0:
         if button_label == 'Konfigurieren':
-            if (1 < samples_to_display <= 1000
+            if (sample_rate is not None 
+                    and 1 < samples_to_display <= 10000
                     and active_channels
-                    and sample_rate_val <= (100000 / len(active_channels))):
+                    and validiere_abtastrate(sample_rate, len(active_channels))):
                 # Bei Konfiguration das HAT-Objekt erstellen
                 if hat_descriptor_json_str:
                     hat_descriptor = json.loads(hat_descriptor_json_str)
@@ -203,13 +278,12 @@ def start_stop_click(
                 output = 'error'
         elif button_label == 'Start':
             # Beim Starten die a_in_scan_start-Funktion aufrufen
-            sample_rate = float(sample_rate_val)
             channel_mask = 0x0
             for channel in active_channels:
                 channel_mask |= 1 << channel
             hat = globals()['HAT']
-            # 5 Sekunden Daten puffern
-            samples_to_buffer = int(5 * sample_rate)
+            # 10 Sekunden Daten puffern für höhere Abtastraten
+            samples_to_buffer = int(10 * sample_rate)
             hat.a_in_scan_start(channel_mask, samples_to_buffer,
                                 sample_rate, OptionFlags.CONTINUOUS)
             sleep(0.5)
@@ -243,8 +317,8 @@ def update_timer_interval(
     Eine Callback-Funktion zum Aktualisieren des Timer-Intervalls. Der Timer wird vorübergehend
     deaktiviert, während Daten verarbeitet werden, indem das Intervall auf 1 Tag gesetzt wird, und dann
     wieder aktiviert, wenn die gelesenen Daten geplottet wurden. Der Intervallwert, wenn aktiviert,
-    wird basierend auf dem erforderlichen Datendurchsatz berechnet, mit einem Minimum von 500 ms
-    und einem Maximum von 4 Sekunden.
+    wird basierend auf dem erforderlichen Datendurchsatz berechnet, mit einem Minimum von 200 ms
+    und einem Maximum von 2 Sekunden für bessere Aktualisierung bei hohen Abtastraten.
 
     Args:
         acq_state: Der Anwendungsstatus "idle", "configured", "running" oder "error" - 
@@ -269,11 +343,8 @@ def update_timer_interval(
         # Den Timer aktivieren, wenn die Anzahl der im Diagramm angezeigten Samples
         # mit der Anzahl der vom HAT-Gerät gelesenen Samples übereinstimmt
         if 0 < chart_info['sample_count'] == chart_data['sample_count']:
-            # Die Aktualisierungsrate basierend auf der Menge der angezeigten
-            # Daten bestimmen
-            refresh_rate = int(num_channels * samples_to_display / 2)
-            if refresh_rate < 500:
-                refresh_rate = 500  # Minimum von 500 ms
+            # Optimierte Aktualisierungsrate für höhere Abtastraten
+            refresh_rate = max(200, min(2000, int(num_channels * samples_to_display / 5)))
 
     return refresh_rate
 
@@ -294,13 +365,13 @@ def disable_hat_selector_dropdown(acq_state: str) -> bool:
 
 
 @callback(
-    Output('sampleRate', 'disabled'),
+    Output('sampleRateInput', 'disabled'),
     Input('status', 'children')
 )
 def disable_sample_rate_input(acq_state: str) -> bool:
     """
-    Eine Callback-Funktion zum Deaktivieren der Abtastraten-Eingabe, wenn der
-    Anwendungsstatus zu 'configured' oder 'running' wechselt.
+    Eine Callback-Funktion zum Deaktivieren der Abtastrate-Eingabe,
+    wenn der Anwendungsstatus zu 'configured' oder 'running' wechselt.
     """
     disabled = False
     if acq_state == 'configured' or acq_state == 'running':
@@ -520,7 +591,8 @@ def update_strip_chart(chart_data_json_str: str, active_channels: List[int]) -> 
             x=list(chart_data['samples']),
             y=list(data[chan_idx]),
             name=f'Kanal {channel}',
-            marker={'color': colors[channel]}
+            line={'color': colors[channel], 'width': 1},
+            mode='lines'  # Nur Linien ohne Punkte für saubere Darstellung
         )
         plot_data.append(scatter_serie)
 
@@ -568,7 +640,7 @@ def update_chart_info(_figure: Dict[str, Any], chart_data_json_str: str) -> str:
     Input('chartData', 'children'),
     Input('status', 'children'),
     State('hatSelector', 'value'),
-    State('sampleRate', 'value'),
+    State('sampleRateInput', 'value'),
     State('samplesToDisplay', 'value'),
     State('channelSelections', 'value')
 )
@@ -576,7 +648,7 @@ def update_error_message(
     chart_data_json_str: str, 
     acq_state: str, 
     hat_selection: str,
-    sample_rate: float, 
+    sample_rate: Optional[float], 
     samples_to_display: int, 
     active_channels: List[int]
 ) -> str:
@@ -590,7 +662,7 @@ def update_error_message(
             "running" oder "error" - löst den Callback aus.
         hat_selection: Eine Zeichenfolge, die ein JSON-Objekt darstellt
             und den Deskriptor für das ausgewählte MCC 118 DAQ HAT enthält.
-        sample_rate: Der vom Benutzer angegebene Abtastratenwert.
+        sample_rate: Die manuell eingegebene Abtastrate.
         samples_to_display: Die Anzahl der anzuzeigenden Samples.
         active_channels: Eine Liste von Ganzzahlen, die den vom Benutzer
             ausgewählten aktiven Kanälen entspricht.
@@ -609,18 +681,18 @@ def update_error_message(
             error_message += 'Puffer-Überlauf aufgetreten; '
     elif acq_state == 'error':
         num_active_channels = len(active_channels)
-        max_sample_rate = 100000
+        
         if not hat_selection:
             error_message += 'Ungültige HAT-Auswahl; '
         if num_active_channels <= 0:
             error_message += 'Ungültige Kanalauswahl (min 1); '
-        else:
-            max_sample_rate = 100000 / len(active_channels)
-        if sample_rate > max_sample_rate:
-            error_message += 'Ungültige Abtastrate (max: '
-            error_message += str(max_sample_rate) + '); '
-        if samples_to_display <= 1 or samples_to_display > 1000:
-            error_message += 'Ungültige Anzahl anzuzeigender Samples (Bereich: 2-1000); '
+        if sample_rate is None or sample_rate <= 0:
+            error_message += 'Ungültige Abtastrate (min 1 Hz); '
+        elif not validiere_abtastrate(sample_rate, num_active_channels):
+            max_rate = berechne_maximale_abtastrate(num_active_channels)
+            error_message += f'Abtastrate zu hoch (max: {max_rate/1000:g} kHz für {num_active_channels} Kanal{"e" if num_active_channels > 1 else ""}); '
+        if samples_to_display <= 1 or samples_to_display > 10000:
+            error_message += 'Ungültige Anzahl anzuzeigender Samples (Bereich: 2-10000); '
 
     return error_message
 
