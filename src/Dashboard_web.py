@@ -28,12 +28,12 @@ def get_ip_address():
 
 # Dash App initialisieren
 app = Dash(__name__)
-app.title = "OurDAQ Dashboard"
+app.title = "OurDAQ Datenerfassungssystem"
 
 # Layout der App
 app.layout = html.Div([
     # Header
-    html.H1("OurDAQ Dashboard", 
+    html.H1("OurDAQ Datenerfassungssystem", 
             style={'textAlign': 'center', 'color': 'white', 'backgroundColor': '#2c3e50',
                    'padding': '30px', 'margin': '0 0 40px 0', 'borderRadius': '8px',
                    'fontSize': '36px'}),
@@ -248,12 +248,20 @@ def handle_button_clicks(dmm_clicks, funktionsgenerator_clicks, oszilloskop_clic
                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 gestartete_prozesse['oszilloskop'] = prozess
             
-            # Starte Jupyter Notebooks
+            # Starte Jupyter Notebooks mit deaktivierter Token-Authentifizierung
             diode_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Diodenkennlinie.ipynb")
             if os.path.exists(diode_pfad) and ist_port_verfuegbar(8888):
                 try:
-                    prozess = subprocess.Popen(['jupyter', 'notebook', diode_pfad, '--ip=0.0.0.0', '--port=8888', '--no-browser'],
-                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    # Wichtige Änderung: --NotebookApp.token='' deaktiviert die Token-Authentifizierung
+                    prozess = subprocess.Popen([
+                        'jupyter', 'notebook', diode_pfad, 
+                        '--ip=0.0.0.0', 
+                        '--port=8888', 
+                        '--no-browser',
+                        '--NotebookApp.token=',
+                        '--NotebookApp.password=',
+                        '--NotebookApp.disable_check_xsrf=True'
+                    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     gestartete_prozesse['diode_notebook'] = prozess
                 except:
                     pass
@@ -261,8 +269,16 @@ def handle_button_clicks(dmm_clicks, funktionsgenerator_clicks, oszilloskop_clic
             filter_pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Filterkennlinie.ipynb")
             if os.path.exists(filter_pfad) and ist_port_verfuegbar(8889):
                 try:
-                    prozess = subprocess.Popen(['jupyter', 'notebook', filter_pfad, '--ip=0.0.0.0', '--port=8889', '--no-browser'],
-                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    # Wichtige Änderung: --NotebookApp.token='' deaktiviert die Token-Authentifizierung
+                    prozess = subprocess.Popen([
+                        'jupyter', 'notebook', filter_pfad, 
+                        '--ip=0.0.0.0', 
+                        '--port=8889', 
+                        '--no-browser',
+                        '--NotebookApp.token=',
+                        '--NotebookApp.password=',
+                        '--NotebookApp.disable_check_xsrf=True'
+                    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     gestartete_prozesse['filter_notebook'] = prozess
                 except:
                     pass
