@@ -122,6 +122,7 @@ uv run jupyter notebook
   - `DMM.py`: Dashboard für Digitalmultimeter
   - `Filterkennlinie.ipynb`: Jupyter Notebook für Filterkennlinie
   - `Funktionsgenerator_AD9833.py`: Datei zu Erzeugung der Signale mit AD9833
+  - `Funktionsgenerator_web.py`: Erzeugung der Signale mit AD9833 in Web
   - `Funktionsgenerator.py`: Dashboard zu Erzeugung der Signale
   - `Netzteilfunktion.py`: Dashboard für Netzteilfunktion
   - `Oszilloskop_web.py`: Oszilloskop in Web
