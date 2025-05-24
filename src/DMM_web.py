@@ -66,7 +66,6 @@ class DashDMM:
         """Initialisiert das MCC 118 DAQ HAT"""
         try:
             self.hat = mcc118(0)
-            print("MCC 118 erfolgreich initialisiert")
         except HatError as e:
             print(f"Fehler beim Initialisieren des MCC 118: {str(e)}")
             self.hat = None
