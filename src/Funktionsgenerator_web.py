@@ -197,7 +197,7 @@ app.layout = html.Div([
             # Zentrale Schaltfläche
             html.Div([
                 html.Button(
-                    'Konfiguration anwenden',
+                    'Konfigurieren',
                     id='apply-button',
                     style={'width': '250px', 'height': '45px', 'backgroundColor': '#27ae60',
                            'color': 'white', 'border': 'none', 'borderRadius': '5px',

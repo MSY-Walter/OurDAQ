@@ -107,9 +107,11 @@ def init_chart_data(number_of_channels: int, number_of_samples: int) -> str:
 
 # Definition des HTML-Layouts für die Benutzeroberfläche
 app.layout = html.Div([
+    # Header mit einheitlichem Stil wie im Funktionsgenerator
     html.H1(
         children='OurDAQ - Oszilloskop',
-        id='exampleTitle'
+        style={'textAlign': 'center', 'color': 'white', 'backgroundColor': '#2c3e50',
+               'padding': '20px', 'margin': '0 0 20px 0', 'borderRadius': '8px'}
     ),
     html.Div([
         html.Div(
