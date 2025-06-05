@@ -1,4 +1,4 @@
-import RPi.GPIO as GPIO
+import gpiod
 import spidev
 import time
 
@@ -19,6 +19,7 @@ SPI_FREQUENCY = 1000000  # 1 MHz
 
 # FSYNC Pin (Chip Select)
 FSYNC_PIN = 25  # GPIO-Pin für FSYNC
+CHIP = 'gpiochip4'  # GPIO chip for Raspberry Pi 5 (RP1)
 
 # Frequenz-Konstanten
 FMCLK = 25000000  # 25 MHz Standardtaktfrequenz
@@ -28,9 +29,10 @@ MIN_FREQUENCY = 0.1    # Minimale Ausgangsfrequenz: 0.1 Hz
 def init_AD9833():
     """Initialisiert GPIO und SPI für AD9833"""
     # GPIO initialisieren
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setup(FSYNC_PIN, GPIO.OUT)
-    GPIO.output(FSYNC_PIN, GPIO.HIGH)
+    global chip, fsync_line
+    chip = gpiod.Chip(CHIP)
+    fsync_line = chip.get_line(FSYNC_PIN)
+    fsync_line.request(consumer="ad9833_fsync", type=gpiod.LINE_REQ_DIR_OUT, default_val=1)  # FSYNC high
     
     # SPI initialisieren
     global spi
@@ -45,9 +47,9 @@ def init_AD9833():
 
 def write_to_AD9833(data):
     """Sendet 16-Bit Daten an AD9833"""
-    GPIO.output(FSYNC_PIN, GPIO.LOW)
+    fsync_line.set_value(0)  # FSYNC low
     spi.xfer2([data >> 8, data & 0xFF])
-    GPIO.output(FSYNC_PIN, GPIO.HIGH)
+    fsync_line.set_value(1)  # FSYNC high
 
 def set_frequency(freq):
     """Stellt die Ausgangsfrequenz ein (in Hz)"""
@@ -110,7 +112,10 @@ def cleanup():
         pass
     finally:
         # Ressourcen freigeben
-        GPIO.cleanup()
+        if 'fsync_line' in globals():
+            fsync_line.release()
+        if 'chip' in globals():
+            chip.close()
         if 'spi' in globals():
             spi.close()
 
