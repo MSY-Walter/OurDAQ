@@ -31,7 +31,7 @@ aktuelle_wellenform = None
 aktuelle_frequenz = None
 
 # GPIOD und SPI Einstellungen
-CHIP = "gpiochip4"  # Adjust based on `gpiodetect` output (common for Pi 5)
+CHIP = "gpiochip4"  # Adjust based on gpiodetect output
 FSYNC_PIN = 25      # GPIO-Pin für FSYNC
 spi = None
 line = None
@@ -48,7 +48,11 @@ def init_AD9833():
         
         # SPI initialisieren
         spi = spidev.SpiDev()
-        spi.open(0, 0)  # SPI Bus 0, Device 0
+        # Try different bus/device combinations
+        try:
+            spi.open(0, 0)  # SPI Bus 0, Device 0
+        except FileNotFoundError:
+            spi.open(1, 0)  # Fallback to Bus 1, Device 0
         spi.max_speed_hz = 1000000  # 1 MHz
         spi.mode = 0b10  # SPI Modus 2
         
@@ -58,6 +62,9 @@ def init_AD9833():
         
         ist_initialisiert = True
         return True, "AD9833 erfolgreich initialisiert"
+    except FileNotFoundError as e:
+        ist_initialisiert = False
+        return False, f"Fehler beim Initialisieren: [Errno 2] No such file or directory - Check SPI/GPIO config"
     except Exception as e:
         ist_initialisiert = False
         return False, f"Fehler beim Initialisieren: {str(e)}"
@@ -126,7 +133,6 @@ def get_ip_address():
 app = Dash(__name__)
 app.title = "OurDAQ - Funktionsgenerator"
 
-# Layout der App (same as before, omitted for brevity)
 app.layout = html.Div([
     html.H1("OurDAQ - Funktionsgenerator", 
             style={'textAlign': 'center', 'color': 'white', 'backgroundColor': '#2c3e50',
