@@ -87,7 +87,8 @@ def debug_print(message):
     """Debug-Ausgabe nur wenn DEBUG_MODE aktiviert ist"""
     if DEBUG_MODE:
         timestamp = datetime.now().strftime('%H:%M:%S')
-        safe_message = message.encode('ascii', 'replace').decode('ascii')
+        # Use UTF-8 encoding with replace to handle all characters
+        safe_message = message.encode('utf-8', errors='replace').decode('utf-8')
         print(f"[{timestamp}] DEBUG: {safe_message}")
 
 def is_raspberry_pi():
