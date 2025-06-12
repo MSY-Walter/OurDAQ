@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
 """
 Verbesserte Version des OurDAQ Dashboards
 Mit Onglet-basierter Navigation und integrierter Funktionalität
@@ -6,7 +8,6 @@ Mit Onglet-basierter Navigation und integrierter Funktionalität
 
 import socket
 import subprocess
-import sys
 import os
 import time
 import atexit
@@ -86,7 +87,8 @@ def debug_print(message):
     """Debug-Ausgabe nur wenn DEBUG_MODE aktiviert ist"""
     if DEBUG_MODE:
         timestamp = datetime.now().strftime('%H:%M:%S')
-        print(f"[{timestamp}] DEBUG: {message}")
+        safe_message = message.encode('ascii', 'replace').decode('ascii')
+        print(f"[{timestamp}] DEBUG: {safe_message}")
 
 def is_raspberry_pi():
     """Überprüft, ob das System ein Raspberry Pi ist"""
