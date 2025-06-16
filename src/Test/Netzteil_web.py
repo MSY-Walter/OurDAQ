@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Netzteil Web Interface für OurDAQ Dashboard
-Integriert positive und negative Spannungseinstellung mit Strommessung
+Integriert Spannungseinstellung mit Strommessung
 """
 
 import argparse
@@ -46,7 +46,7 @@ SHUNT_WIDERSTAND = 0.1   # Ohm
 VERSTAERKUNG = 69.0      # Verstärkungsfaktor
 CS_PIN = 22              # Chip Select Pin
 DAC_MAX_VALUE = 4095     # 12-bit DAC
-VOLTAGE_REFERENCE = 5.0  # Referenzspannung in Volt
+VOLTAGE_REFERENCE = 10.0  # Referenzspannung in Volt (für +10V bis -10V)
 
 # Mess-Parameter
 SAMPLE_RATE = 1000.0     # Hz
@@ -61,8 +61,7 @@ class NetzteilController:
     def __init__(self, simulation_mode=False):
         self.simulation_mode = simulation_mode or not HARDWARE_AVAILABLE or platform.system() == "Windows"
         self.running = False
-        self.current_voltage_pos = 0
-        self.current_voltage_neg = 0
+        self.current_voltage = 0
         self.measured_current = 0
         self.measured_voltage = 0
         
@@ -107,25 +106,22 @@ class NetzteilController:
             self.spi = None
             self.hat = None
             
-    def write_dac_channel(self, channel, value):
-        """Schreibt Wert an DAC-Kanal (0=positiv, 1=negativ)"""
+    def write_dac_channel(self, value):
+        """Schreibt Wert an DAC-Kanal"""
         if self.simulation_mode or not HARDWARE_AVAILABLE:
             # Simulation
-            voltage = (value / DAC_MAX_VALUE) * VOLTAGE_REFERENCE
-            if channel == 0:
-                self.current_voltage_pos = voltage
-            else:
-                self.current_voltage_neg = voltage
+            voltage = ((value / DAC_MAX_VALUE) * (2 * VOLTAGE_REFERENCE)) - VOLTAGE_REFERENCE
+            self.current_voltage = voltage
             return
             
         try:
             assert 0 <= value <= DAC_MAX_VALUE
             
             control = 0
-            control |= channel << 15  # Channel A=0 oder B=1
-            control |= 1 << 14        # Buffered
-            control |= 0 << 13        # Gain 0=2x
-            control |= 1 << 12        # Shutdown=0
+            control |= 0 << 15  # Channel A=0
+            control |= 1 << 14  # Buffered
+            control |= 0 << 13  # Gain 0=2x
+            control |= 1 << 12  # Shutdown=0
             
             data = control | (value & 0xFFF)
             high_byte = (data >> 8) & 0xFF
@@ -137,40 +133,30 @@ class NetzteilController:
                 GPIO.output(CS_PIN, GPIO.HIGH)
                 
                 # Aktuelle Spannung aktualisieren
-                voltage = (value / DAC_MAX_VALUE) * VOLTAGE_REFERENCE
-                if channel == 0:
-                    self.current_voltage_pos = voltage
-                else:
-                    self.current_voltage_neg = voltage
+                voltage = ((value / DAC_MAX_VALUE) * (2 * VOLTAGE_REFERENCE)) - VOLTAGE_REFERENCE
+                self.current_voltage = voltage
             else:
                 print("Hardware nicht verfügbar, verwende Simulation")
                 self.simulation_mode = True
-                self.write_dac_channel(channel, value)  # Recursive call in simulation mode
+                self.write_dac_channel(value)  # Recursive call in simulation mode
                 
         except Exception as e:
             print(f"Fehler beim DAC-Schreiben: {e}")
             
-    def set_positive_voltage(self, voltage):
-        """Setzt positive Ausgangsspannung"""
-        voltage = max(0, min(VOLTAGE_REFERENCE, voltage))  # Clamp voltage
-        dac_value = int((voltage / VOLTAGE_REFERENCE) * DAC_MAX_VALUE)
+    def set_voltage(self, voltage):
+        """Setzt Ausgangsspannung"""
+        voltage = max(-VOLTAGE_REFERENCE, min(VOLTAGE_REFERENCE, voltage))  # Clamp voltage (-10V bis +10V)
+        # Skaliere die Spannung auf den DAC-Bereich (0 bis 4095)
+        dac_value = int(((voltage + VOLTAGE_REFERENCE) / (2 * VOLTAGE_REFERENCE)) * DAC_MAX_VALUE)
         dac_value = max(0, min(DAC_MAX_VALUE, dac_value))
-        self.write_dac_channel(0, dac_value)
-        print(f"Positive Spannung gesetzt: {voltage:.2f}V (DAC: {dac_value})")
-        
-    def set_negative_voltage(self, voltage):
-        """Setzt negative Ausgangsspannung"""
-        voltage = max(0, min(VOLTAGE_REFERENCE, voltage))  # Clamp voltage
-        dac_value = int((voltage / VOLTAGE_REFERENCE) * DAC_MAX_VALUE)
-        dac_value = max(0, min(DAC_MAX_VALUE, dac_value))
-        self.write_dac_channel(1, dac_value)
-        print(f"Negative Spannung gesetzt: {voltage:.2f}V (DAC: {dac_value})")
+        self.write_dac_channel(dac_value)
+        print(f"Spannung gesetzt: {voltage:.2f}V (DAC: {dac_value})")
         
     def read_current(self):
         """Liest Strom über MCC 118 Kanal 5"""
         if self.simulation_mode or not HARDWARE_AVAILABLE or not self.hat:
             # Simuliere Strom basierend auf Spannung (Ohm'sches Gesetz)
-            total_voltage = abs(self.current_voltage_pos - self.current_voltage_neg)
+            total_voltage = abs(self.current_voltage)
             simulated_current = total_voltage / 10.0  # Annahme: 10 Ohm Last
             # Füge etwas Rauschen hinzu für realistischere Simulation
             noise = (time.time() % 1) * 0.001 - 0.0005
@@ -206,7 +192,7 @@ class NetzteilController:
         while self.running:
             try:
                 current = self.read_current()
-                total_voltage = self.current_voltage_pos - self.current_voltage_neg
+                total_voltage = self.current_voltage
                 
                 # Historie aktualisieren
                 now = datetime.now()
@@ -223,19 +209,16 @@ class NetzteilController:
     def get_status(self):
         """Liefert aktuellen Status"""
         return {
-            'voltage_pos': self.current_voltage_pos,
-            'voltage_neg': self.current_voltage_neg,
-            'voltage_total': self.current_voltage_pos - self.current_voltage_neg,
+            'voltage': self.current_voltage,
             'current': self.measured_current,
-            'power': abs(self.current_voltage_pos - self.current_voltage_neg) * abs(self.measured_current),
+            'power': abs(self.current_voltage) * abs(self.measured_current),
             'simulation_mode': self.simulation_mode,
             'monitoring': self.running
         }
         
     def emergency_stop(self):
         """Notaus - alle Ausgänge auf 0V"""
-        self.set_positive_voltage(0)
-        self.set_negative_voltage(0)
+        self.set_voltage(0)
         print("NOTAUS aktiviert - alle Ausgänge auf 0V")
         
     def cleanup(self):
@@ -300,28 +283,28 @@ def create_app(simulation_mode=False):
         html.Div([
             # Kontrollen
             html.Div([
-                # Positive Spannung
+                # Spannung
                 html.Div([
-                    html.H3("🔋 Positive Spannung", style={'color': '#27ae60', 'marginBottom': '15px'}),
+                    html.H3("🔋 Spannung", style={'color': '#27ae60', 'marginBottom': '15px'}),
                     html.Div([
                         html.Label("Spannung (V):", style={'fontWeight': 'bold'}),
                         dcc.Slider(
-                            id='voltage-pos-slider',
-                            min=0,
-                            max=5,
+                            id='voltage-slider',
+                            min=-10,
+                            max=10,
                             step=0.1,
                             value=0,
-                            marks={i: f'{i}V' for i in range(6)},
+                            marks={i: f'{i}V' for i in range(-10, 11, 2)},
                             tooltip={"placement": "bottom", "always_visible": True}
                         )
                     ], style={'marginBottom': '15px'}),
                     
                     html.Div([
                         dcc.Input(
-                            id='voltage-pos-input',
+                            id='voltage-input',
                             type='number',
-                            min=0,
-                            max=5,
+                            min=-10,
+                            max=10,
                             step=0.01,
                             value=0,
                             placeholder="Spannung eingeben",
@@ -329,7 +312,7 @@ def create_app(simulation_mode=False):
                         ),
                         html.Button(
                             '✓ Setzen',
-                            id='set-pos-button',
+                            id='set-voltage-button',
                             n_clicks=0,
                             style={
                                 'backgroundColor': '#27ae60',
@@ -348,56 +331,6 @@ def create_app(simulation_mode=False):
                     'boxShadow': '0 2px 4px rgba(0,0,0,0.1)',
                     'marginBottom': '20px',
                     'border': '2px solid #27ae60'
-                }),
-                
-                # Negative Spannung
-                html.Div([
-                    html.H3("🔋 Negative Spannung", style={'color': '#e74c3c', 'marginBottom': '15px'}),
-                    html.Div([
-                        html.Label("Spannung (V):", style={'fontWeight': 'bold'}),
-                        dcc.Slider(
-                            id='voltage-neg-slider',
-                            min=0,
-                            max=5,
-                            step=0.1,
-                            value=0,
-                            marks={i: f'{i}V' for i in range(6)},
-                            tooltip={"placement": "bottom", "always_visible": True}
-                        )
-                    ], style={'marginBottom': '15px'}),
-                    
-                    html.Div([
-                        dcc.Input(
-                            id='voltage-neg-input',
-                            type='number',
-                            min=0,
-                            max=5,
-                            step=0.01,
-                            value=0,
-                            placeholder="Spannung eingeben",
-                            style={'width': '120px', 'marginRight': '10px', 'padding': '5px'}
-                        ),
-                        html.Button(
-                            '✓ Setzen',
-                            id='set-neg-button',
-                            n_clicks=0,
-                            style={
-                                'backgroundColor': '#e74c3c',
-                                'color': 'white',
-                                'border': 'none',
-                                'padding': '8px 15px',
-                                'borderRadius': '4px',
-                                'cursor': 'pointer'
-                            }
-                        )
-                    ])
-                ], style={
-                    'backgroundColor': 'white',
-                    'padding': '20px',
-                    'borderRadius': '8px',
-                    'boxShadow': '0 2px 4px rgba(0,0,0,0.1)',
-                    'marginBottom': '20px',
-                    'border': '2px solid #e74c3c'
                 }),
                 
                 # Notaus und Kontrollen
@@ -513,18 +446,8 @@ def create_app(simulation_mode=False):
         
         return html.Div([
             html.Div([
-                html.Span("🔋 Pos. Spannung: ", style={'fontWeight': 'bold', 'color': '#27ae60'}),
-                html.Span(f"{status['voltage_pos']:.2f} V")
-            ], style={'marginBottom': '8px'}),
-            
-            html.Div([
-                html.Span("🔋 Neg. Spannung: ", style={'fontWeight': 'bold', 'color': '#e74c3c'}),
-                html.Span(f"{status['voltage_neg']:.2f} V")
-            ], style={'marginBottom': '8px'}),
-            
-            html.Div([
-                html.Span("⚡ Gesamt-Spannung: ", style={'fontWeight': 'bold', 'color': '#2c3e50'}),
-                html.Span(f"{status['voltage_total']:.2f} V")
+                html.Span("🔋 Spannung: ", style={'fontWeight': 'bold', 'color': '#27ae60'}),
+                html.Span(f"{status['voltage']:.2f} V")
             ], style={'marginBottom': '8px'}),
             
             html.Div([
@@ -598,15 +521,15 @@ def create_app(simulation_mode=False):
         
         return fig
     
-    # Positive Voltage Controls
+    # Voltage Controls
     @app.callback(
         [Output('debug-output', 'children', allow_duplicate=True),
-         Output('voltage-pos-slider', 'value', allow_duplicate=True)],
-        Input('set-pos-button', 'n_clicks'),
-        State('voltage-pos-input', 'value'),
+         Output('voltage-slider', 'value', allow_duplicate=True)],
+        Input('set-voltage-button', 'n_clicks'),
+        State('voltage-input', 'value'),
         prevent_initial_call=True
     )
-    def set_positive_voltage_button(n_clicks, voltage):
+    def set_voltage_button(n_clicks, voltage):
         if n_clicks is None or n_clicks == 0:
             return "", 0
             
@@ -615,67 +538,30 @@ def create_app(simulation_mode=False):
             
         try:
             voltage = float(voltage)
-            voltage = max(0, min(5, voltage))  # Clamp to valid range
+            voltage = max(-10, min(10, voltage))  # Clamp to valid range (-10V bis +10V)
             if netzteil:
-                netzteil.set_positive_voltage(voltage)
-                return f"Positive Spannung auf {voltage:.2f}V gesetzt", voltage
+                netzteil.set_voltage(voltage)
+                return f"Spannung auf {voltage:.2f}V gesetzt", voltage
             else:
                 return "Fehler: Netzteil nicht verfügbar", 0
         except Exception as e:
             return f"Fehler: {str(e)}", 0
     
     @app.callback(
-        Output('voltage-pos-input', 'value'),
-        Input('voltage-pos-slider', 'value'),
+        Output('voltage-input', 'value'),
+        Input('voltage-slider', 'value'),
         prevent_initial_call=False
     )
-    def sync_pos_input_from_slider(slider_value):
+    def sync_input_from_slider(slider_value):
         if slider_value is not None and netzteil:
-            netzteil.set_positive_voltage(slider_value)
-        return slider_value
-    
-    # Negative Voltage Controls
-    @app.callback(
-        [Output('debug-output', 'children', allow_duplicate=True),
-         Output('voltage-neg-slider', 'value', allow_duplicate=True)],
-        Input('set-neg-button', 'n_clicks'),
-        State('voltage-neg-input', 'value'),
-        prevent_initial_call=True
-    )
-    def set_negative_voltage_button(n_clicks, voltage):
-        if n_clicks is None or n_clicks == 0:
-            return "", 0
-            
-        if voltage is None:
-            return "Fehler: Keine Spannung eingegeben", 0
-            
-        try:
-            voltage = float(voltage)
-            voltage = max(0, min(5, voltage))  # Clamp to valid range
-            if netzteil:
-                netzteil.set_negative_voltage(voltage)
-                return f"Negative Spannung auf {voltage:.2f}V gesetzt", voltage
-            else:
-                return "Fehler: Netzteil nicht verfügbar", 0
-        except Exception as e:
-            return f"Fehler: {str(e)}", 0
-    
-    @app.callback(
-        Output('voltage-neg-input', 'value'),
-        Input('voltage-neg-slider', 'value'),
-        prevent_initial_call=False
-    )
-    def sync_neg_input_from_slider(slider_value):
-        if slider_value is not None and netzteil:
-            netzteil.set_negative_voltage(slider_value)
+            netzteil.set_voltage(slider_value)
         return slider_value
     
     # Emergency Stop
     @app.callback(
         [Output('emergency-stop', 'children'),
          Output('emergency-stop', 'style'),
-         Output('voltage-pos-slider', 'value', allow_duplicate=True),
-         Output('voltage-neg-slider', 'value', allow_duplicate=True)],
+         Output('voltage-slider', 'value', allow_duplicate=True)],
         Input('emergency-stop', 'n_clicks'),
         prevent_initial_call=True
     )
@@ -692,7 +578,7 @@ def create_app(simulation_mode=False):
                 'cursor': 'pointer',
                 'width': '100%',
                 'marginBottom': '10px'
-            }, 0, 0
+            }, 0
             
         if netzteil:
             netzteil.emergency_stop()
@@ -708,24 +594,23 @@ def create_app(simulation_mode=False):
             'cursor': 'pointer',
             'width': '100%',
             'marginBottom': '10px'
-        }, 0, 0
+        }, 0
     
     # Reset Button
     @app.callback(
         [Output('reset-button', 'children'),
-         Output('voltage-pos-slider', 'value', allow_duplicate=True),
-         Output('voltage-neg-slider', 'value', allow_duplicate=True)],
+         Output('voltage-slider', 'value', allow_duplicate=True)],
         Input('reset-button', 'n_clicks'),
         prevent_initial_call=True
     )
     def reset_callback(n_clicks):
         if n_clicks is None or n_clicks == 0:
-            return '🔄 Reset', 0, 0
+            return '🔄 Reset', 0
             
         if netzteil:
             netzteil.emergency_stop()
             
-        return '✅ Reset durchgeführt', 0, 0
+        return '✅ Reset durchgeführt', 0
     
     return app
 
