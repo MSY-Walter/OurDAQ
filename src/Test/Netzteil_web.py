@@ -23,15 +23,62 @@ try:
     import spidev
     import RPi.GPIO as GPIO
     from daqhats import mcc118, OptionFlags, HatIDs, HatError
-    from daqhats_utils import select_hat_device, chan_list_to_string, chan_list_to_mask
+    
+    # Erweiterte daqhats_utils Import-Behandlung
+    try:
+        from daqhats_utils import select_hat_device, chan_list_to_string, chan_list_to_mask
+    except ImportError:
+        # Fallback: nur grundlegende Funktionen importieren
+        try:
+            from daqhats_utils import select_hat_device
+            # Definiere fehlende Funktionen lokal
+            def chan_list_to_string(channels):
+                """Hilfsfunktion für Kanalliste zu String-Konvertierung"""
+                return ', '.join(map(str, channels))
+                
+            def chan_list_to_mask(channels):
+                """Hilfsfunktion für Kanalliste zu Bitmask-Konvertierung"""
+                mask = 0
+                for channel in channels:
+                    mask |= (1 << channel)
+                return mask
+        except ImportError:
+            # Wenn select_hat_device auch fehlt, definiere alle Funktionen
+            def select_hat_device(hat_id):
+                """Fallback-Funktion für HAT-Geräteauswahl"""
+                return 0  # Standard-Adresse
+                
+            def chan_list_to_string(channels):
+                return ', '.join(map(str, channels))
+                
+            def chan_list_to_mask(channels):
+                mask = 0
+                for channel in channels:
+                    mask |= (1 << channel)
+                return mask
+    
     HARDWARE_AVAILABLE = True
     print("Hardware-Module erfolgreich geladen")
+    
 except ImportError as e:
     print(f"Hardware-Module nicht verfügbar: {e}")
     HARDWARE_AVAILABLE = False
-    # Define dummy classes/modules to prevent NameError
+    # Dummy-Klassen/Module definieren um NameError zu vermeiden
     spidev = None
     GPIO = None
+    
+    # Dummy-Funktionen für daqhats_utils
+    def select_hat_device(hat_id):
+        return 0
+        
+    def chan_list_to_string(channels):
+        return ', '.join(map(str, channels))
+        
+    def chan_list_to_mask(channels):
+        mask = 0
+        for channel in channels:
+            mask |= (1 << channel)
+        return mask
 
 # Unter Windows UTF-8 für die Konsole erzwingen
 if platform.system() == "Windows":
@@ -94,11 +141,17 @@ class NetzteilController:
             GPIO.setup(CS_PIN, GPIO.OUT)
             GPIO.output(CS_PIN, GPIO.HIGH)
             
-            # MCC 118 für ADC initialisieren
-            address = select_hat_device(HatIDs.MCC_118)
-            self.hat = mcc118(address)
+            # MCC 118 für ADC initialisieren mit verbesserter Fehlerbehandlung
+            try:
+                address = select_hat_device(HatIDs.MCC_118)
+                self.hat = mcc118(address)
+                print(f"MCC 118 HAT erfolgreich initialisiert an Adresse {address}")
+            except Exception as hat_error:
+                print(f"Warnung: MCC 118 HAT konnte nicht initialisiert werden: {hat_error}")
+                print("Weiter nur mit DAC-Funktionalität...")
+                self.hat = None
             
-            print("Hardware erfolgreich initialisiert")
+            print("Hardware-Grundinitialisierung abgeschlossen")
             
         except Exception as e:
             print(f"Fehler bei Hardware-Initialisierung: {e}")
@@ -138,14 +191,14 @@ class NetzteilController:
             else:
                 print("Hardware nicht verfügbar, verwende Simulation")
                 self.simulation_mode = True
-                self.write_dac_channel(value)  # Recursive call in simulation mode
+                self.write_dac_channel(value)  # Rekursiver Aufruf im Simulationsmodus
                 
         except Exception as e:
             print(f"Fehler beim DAC-Schreiben: {e}")
             
     def set_voltage(self, voltage):
         """Setzt Ausgangsspannung"""
-        voltage = max(-VOLTAGE_REFERENCE, min(VOLTAGE_REFERENCE, voltage))  # Clamp voltage (-10V bis +10V)
+        voltage = max(-VOLTAGE_REFERENCE, min(VOLTAGE_REFERENCE, voltage))  # Spannung begrenzen (-10V bis +10V)
         # Skaliere die Spannung auf den DAC-Bereich (0 bis 4095)
         dac_value = int(((voltage + VOLTAGE_REFERENCE) / (2 * VOLTAGE_REFERENCE)) * DAC_MAX_VALUE)
         dac_value = max(0, min(DAC_MAX_VALUE, dac_value))
@@ -173,7 +226,9 @@ class NetzteilController:
         except Exception as e:
             print(f"Fehler beim Strom lesen: {e}")
             # Fallback auf Simulation
-            self.simulation_mode = True
+            if not self.simulation_mode:
+                print("Wechsle zu Simulationsmodus für Strommessung")
+                self.simulation_mode = True
             return self.read_current()
             
     def start_monitoring(self):
@@ -354,7 +409,7 @@ def create_app(simulation_mode=False):
                     ),
                     
                     html.Button(
-                        '🔄 Reset',
+                        '🔄 Zurücksetzen',
                         id='reset-button',
                         n_clicks=0,
                         style={
@@ -412,12 +467,12 @@ def create_app(simulation_mode=False):
             n_intervals=0
         ),
         
-        # Hidden Div for debugging
+        # Verstecktes Div für Debugging
         html.Div(id='debug-output', style={'display': 'none'})
     ], style={'backgroundColor': '#f5f7fa', 'minHeight': '100vh'})
     
     # =============================================================================
-    # CALLBACKS - Alle mit expliziten prevent_initial_call Settings
+    # CALLBACKS - Alle mit expliziten prevent_initial_call Einstellungen
     # =============================================================================
     
     @app.callback(
@@ -521,7 +576,7 @@ def create_app(simulation_mode=False):
         
         return fig
     
-    # Voltage Controls
+    # Spannungssteuerung
     @app.callback(
         [Output('debug-output', 'children', allow_duplicate=True),
          Output('voltage-slider', 'value', allow_duplicate=True)],
@@ -538,7 +593,7 @@ def create_app(simulation_mode=False):
             
         try:
             voltage = float(voltage)
-            voltage = max(-10, min(10, voltage))  # Clamp to valid range (-10V bis +10V)
+            voltage = max(-10, min(10, voltage))  # Gültigen Bereich begrenzen (-10V bis +10V)
             if netzteil:
                 netzteil.set_voltage(voltage)
                 return f"Spannung auf {voltage:.2f}V gesetzt", voltage
@@ -557,7 +612,7 @@ def create_app(simulation_mode=False):
             netzteil.set_voltage(slider_value)
         return slider_value
     
-    # Emergency Stop
+    # Notaus
     @app.callback(
         [Output('emergency-stop', 'children'),
          Output('emergency-stop', 'style'),
@@ -596,7 +651,7 @@ def create_app(simulation_mode=False):
             'marginBottom': '10px'
         }, 0
     
-    # Reset Button
+    # Zurücksetzen-Button
     @app.callback(
         [Output('reset-button', 'children'),
          Output('voltage-slider', 'value', allow_duplicate=True)],
@@ -605,17 +660,17 @@ def create_app(simulation_mode=False):
     )
     def reset_callback(n_clicks):
         if n_clicks is None or n_clicks == 0:
-            return '🔄 Reset', 0
+            return '🔄 Zurücksetzen', 0
             
         if netzteil:
             netzteil.emergency_stop()
             
-        return '✅ Reset durchgeführt', 0
+        return '✅ Zurücksetzung durchgeführt', 0
     
     return app
 
 # =============================================================================
-# MAIN
+# HAUPTPROGRAMM
 # =============================================================================
 
 def main():
@@ -630,9 +685,8 @@ def main():
     print("=" * 60)
     print("⚡ OurDAQ Netzteil Web Interface")
     print("=" * 60)
-    print(f"🎭 Simulation Mode: {'AN' if args.simulate else 'AUS'}")
+    print(f"🎭 Simulation Mode: {'EIN' if args.simulate else 'AUS'}")
     print(f"🌐 URL: http://{args.host}:{args.port}")
-
     print("=" * 60)
     
     app = create_app(simulation_mode=args.simulate)
@@ -644,7 +698,7 @@ def main():
     finally:
         if netzteil:
             netzteil.cleanup()
-        print("Cleanup abgeschlossen")
+        print("Bereinigung abgeschlossen")
 
 if __name__ == '__main__':
     main()
