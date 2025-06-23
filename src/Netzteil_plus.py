@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import print_function
 import spidev
 import time
@@ -14,7 +15,7 @@ ERASE_TO_END_OF_LINE = '\x1b[0K'
 
 # Parameter der Strommessung
 SHUNT_WIDERSTAND = 0.1   # Ohm
-VERSTAERKUNG = 69.0      # Verst‰rkungsfaktor
+VERSTAERKUNG = 69.0      # Verst√§rkungsfaktor
 
 CS_PIN = 22
 
@@ -52,8 +53,8 @@ def write_dac(value):
 def strombegrenzung():
     
     """
-    MCC 118: Strommessung ¸ber Kanal 5 mit Verst‰rkerfaktor und Shunt
-    Umrechnen von Spannung í Strom: I = U / (Verst‰rkung * R_shunt)
+    MCC 118: Strommessung √ºber Kanal 5 mit Verst√§rkerfaktor und Shunt
+    Umrechnen von Spannung Strom: I = U / (Verst√§rkung * R_shunt)
     """
 
     channels = [5]  # Nur Kanal 5 aktiv
@@ -68,20 +69,20 @@ def strombegrenzung():
         address = select_hat_device(HatIDs.MCC_118)
         hat = mcc118(address)
 
-        print('\nAusgew‰hltes MCC 118 HAT Ger‰t bei Adresse', address)
+        print('\nAusgew√§hltes MCC 118 HAT Ger√§t bei Adresse', address)
         actual_scan_rate = hat.a_in_scan_actual_rate(num_channels, scan_rate)
 
         print('\nMCC 118 kontinuierliche Strommessung (Kanal 5)')
-        print('    Scan-Rate (gew¸nscht): ', scan_rate, 'Hz')
-        print('    Scan-Rate (tats‰chlich): ', actual_scan_rate, 'Hz')
-        print('    Verst‰rkung: ', VERSTAERKUNG)
+        print('    Scan-Rate (gew√ºnscht): ', scan_rate, 'Hz')
+        print('    Scan-Rate (tats√§chlich): ', actual_scan_rate, 'Hz')
+        print('    Verst√§rkung: ', VERSTAERKUNG)
         print('    Shunt-Widerstand: ', SHUNT_WIDERSTAND, 'Ohm')
 
-        input('\nDr¸cke ENTER zum Starten ...')
+        input('\nDr√ºcke ENTER zum Starten ...')
 
         hat.a_in_scan_start(channel_mask, samples_per_channel, scan_rate, options)
 
-        print('\nMessung l‰uft ... (Strg+C zum Beenden)\n')
+        print('\nMessung l√§uft ... (Strg+C zum Beenden)\n')
         print('Samples Read    Scan Count       Spannung (V)      Strom (A)')
 
         read_and_display_data(hat, num_channels, channels)
@@ -100,10 +101,10 @@ def read_and_display_data(hat, num_channels, channels):
         read_result = hat.a_in_scan_read(read_request_size, timeout)
 
         if read_result.hardware_overrun:
-            print('\n\nHardware¸berlauf erkannt\n')
+            print('\n\nHardware√ºberlauf erkannt\n')
             break
         elif read_result.buffer_overrun:
-            print('\n\nPuffer¸berlauf erkannt\n')
+            print('\n\nPuffer√ºberlauf erkannt\n')
             break
 
         samples_read_per_channel = int(len(read_result.data) / num_channels)
