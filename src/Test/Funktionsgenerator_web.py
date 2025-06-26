@@ -17,10 +17,10 @@ FREQ0_REG = 0x4000
 PHASE0_REG = 0xC000
 CONTROL_REG = 0x2000
 
-# Wellenform-Konstanten
-SINE_WAVE = 0x2000
-TRIANGLE_WAVE = 0x2002
-SQUARE_WAVE = 0x2028
+# Wellenform-Konstanten - korrigierte Werte für AD9833
+SINE_WAVE = 0x2000      # Sinus: D5=0, D1=0, D3=0
+TRIANGLE_WAVE = 0x2002  # Dreieck: D5=0, D1=1, D3=0  
+SQUARE_WAVE = 0x2020    # Rechteck: D5=1, D1=0, D3=0 (korrigiert!)
 
 # Frequenz-Konstanten
 FMCLK = 25000000
@@ -163,8 +163,12 @@ def set_frequency(freq):
         freq_word = int((freq * 2**28) / FMCLK)
         logger.info(f"Setze Frequenz {freq} Hz, Freq-Word: 0x{freq_word:08X}")
         
-        # B28-Bit setzen für 28-Bit Frequenz-Update
-        if not write_to_AD9833(0x2100):  # Reset mit B28=1
+        # Frequenz setzen OHNE die Wellenform zu überschreiben
+        # B28-Bit setzen, aber aktuelle Wellenform beibehalten
+        current_control = aktuelle_wellenform if aktuelle_wellenform else SINE_WAVE
+        control_with_b28 = current_control | 0x0100  # B28-Bit setzen
+        
+        if not write_to_AD9833(control_with_b28):
             return False
         
         # Niederwertiges 14-Bit Wort senden
@@ -179,12 +183,12 @@ def set_frequency(freq):
             return False
         logger.debug(f"Frequenz MSB gesendet: 0x{freq_msb:04X}")
         
-        # Reset deaktivieren
-        if not write_to_AD9833(0x2000):
+        # B28-Bit wieder deaktivieren, Wellenform beibehalten
+        if not write_to_AD9833(current_control):
             return False
         
         aktuelle_frequenz = freq
-        logger.info(f"Frequenz erfolgreich gesetzt: {freq} Hz")
+        logger.info(f"Frequenz erfolgreich gesetzt: {freq} Hz (Wellenform beibehalten)")
         return True
     except Exception as e:
         logger.error(f"Fehler beim Setzen der Frequenz: {str(e)}")
@@ -430,13 +434,14 @@ def handle_apply_configuration(n_clicks, wellenform, frequenz):
     wellenform_name = wellenform_namen.get(wellenform, "Unbekannt")
     
     try:
-        if not set_frequency(frequenz):
-            return ('❌ Fehler beim Setzen der Frequenz', 
+        # WICHTIG: Zuerst Wellenform, dann Frequenz setzen!
+        if not set_waveform(wellenform):
+            return ('❌ Fehler beim Setzen der Wellenform', 
                     f"{base_style} border-red-400 text-red-600", 
                     wave_preview)
         
-        if not set_waveform(wellenform):
-            return ('❌ Fehler beim Setzen der Wellenform', 
+        if not set_frequency(frequenz):
+            return ('❌ Fehler beim Setzen der Frequenz', 
                     f"{base_style} border-red-400 text-red-600", 
                     wave_preview)
         
