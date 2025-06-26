@@ -21,7 +21,7 @@ import plotly.express as px
 # Hardware-spezifische Imports (nur auf Raspberry Pi)
 try:
     import spidev
-    import RPi.GPIO as GPIO
+    import lgpio
     from daqhats import mcc118, OptionFlags, HatIDs, HatError
     
     # Erweiterte daqhats_utils Import-Behandlung
@@ -65,7 +65,7 @@ except ImportError as e:
     HARDWARE_AVAILABLE = False
     # Dummy-Klassen/Module definieren um NameError zu vermeiden
     spidev = None
-    GPIO = None
+    lgpio = None
     
     # Dummy-Funktionen für daqhats_utils
     def select_hat_device(hat_id):
@@ -115,6 +115,7 @@ class NetzteilController:
         # Hardware-Objekte initialisieren
         self.spi = None
         self.hat = None
+        self.gpio_handle = None
         
         # Datenhistorie
         self.voltage_history = deque(maxlen=BUFFER_SIZE)
@@ -137,9 +138,9 @@ class NetzteilController:
             self.spi.mode = 0b00
             
             # GPIO für Chip Select
-            GPIO.setmode(GPIO.BCM)
-            GPIO.setup(CS_PIN, GPIO.OUT)
-            GPIO.output(CS_PIN, GPIO.HIGH)
+            self.gpio_handle = lgpio.gpiochip_open(0)
+            lgpio.gpio_claim_output(self.gpio_handle, CS_PIN)
+            lgpio.gpio_write(self.gpio_handle, CS_PIN, 1)
             
             # MCC 118 für ADC initialisieren mit verbesserter Fehlerbehandlung
             try:
@@ -158,6 +159,7 @@ class NetzteilController:
             self.simulation_mode = True
             self.spi = None
             self.hat = None
+            self.gpio_handle = None
             
     def write_dac_channel(self, value):
         """Schreibt Wert an DAC-Kanal"""
@@ -180,10 +182,10 @@ class NetzteilController:
             high_byte = (data >> 8) & 0xFF
             low_byte = data & 0xFF
             
-            if self.spi and GPIO:
-                GPIO.output(CS_PIN, GPIO.LOW)
+            if self.spi and self.gpio_handle:
+                lgpio.gpio_write(self.gpio_handle, CS_PIN, 0)
                 self.spi.xfer2([high_byte, low_byte])
-                GPIO.output(CS_PIN, GPIO.HIGH)
+                lgpio.gpio_write(self.gpio_handle, CS_PIN, 1)
                 
                 # Aktuelle Spannung aktualisieren
                 voltage = ((value / DAC_MAX_VALUE) * (2 * VOLTAGE_REFERENCE)) - VOLTAGE_REFERENCE
@@ -285,8 +287,8 @@ class NetzteilController:
             try:
                 if self.spi:
                     self.spi.close()
-                if GPIO:
-                    GPIO.cleanup()
+                if self.gpio_handle:
+                    lgpio.gpiochip_close(self.gpio_handle)
                 print("Hardware-Cleanup abgeschlossen")
             except Exception as e:
                 print(f"Cleanup-Warnung: {e}")
