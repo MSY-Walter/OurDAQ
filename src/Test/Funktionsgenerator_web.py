@@ -164,7 +164,7 @@ def set_frequency(freq):
         logger.info(f"Setze Frequenz {freq} Hz, Freq-Word: 0x{freq_word:08X}")
         
         # Sicherstellen, dass aktuelle_wellenform definiert ist
-        current_control = aktuelle_wellenform behinderten if aktuelle_wellenform else SINE_WAVE
+        current_control = aktuelle_wellenform if aktuelle_wellenform else SINE_WAVE
         
         # B28-Bit setzen für 28-Bit Frequenzregister-Schreibung
         control_with_b28 = current_control | 0x0100  # B28-Bit aktivieren
