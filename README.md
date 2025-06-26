@@ -4,8 +4,6 @@
 
 Dieses Projekt (OurDAQ) zielt auf die Entwicklung eines prototypischen Messdatenerfassungssystems (DAQ) basierend auf [`Raspberry Pi 5`](https://www.raspberrypi.com/documentation/computers/raspberry-pi.html) und [`Digilent MCC DAQ HAT MCC 118`](https://mccdaq.github.io/daqhats/overview.html#mcc-118) ab. Das System dient als Grundlage für ein studentisches Messtechniklabor.
 
-<img src="images/Dashboard.png" alt="OurDAQ Dashboard" height="300">
-
 Das System bietet folgende Standard-Messroutinen:
 
 - Multimeter-Funktionalität
@@ -55,13 +53,7 @@ Das System bietet folgende Standard-Messroutinen:
    sudo reboot
    ```
 
-3. PyQt5-Systempaket installieren (Falls nicht vorhanden):
-
-   ```bash
-   sudo apt install python3-pyqt5
-   ```
-
-4. repository klonen:
+3. repository klonen:
 
    ```bash
    cd ~
@@ -70,26 +62,14 @@ Das System bietet folgende Standard-Messroutinen:
 
 ### Entwicklungsumgebung
 
-1. Link von PyQt5-Systempaket zu der virtuellen Umgebung erstellen:
+1. Abhängigkeiten und Pakete in der virtuellen Umgebung installieren:
 
    ```bash
    cd ~/OurDAQ
-   python3 -m venv --system-site-packages .venv
-   ```
-
-2. Abhängigkeiten und Pakete in der virtuellen Umgebung installieren:
-
-   ```bash
    uv sync
    ```
 
 ## Verwendung
-
-Hauptmenü öffnen:
-
-```bash
-uv run src/Dashboard.py
-```
 
 Hauptmenü in Web öffnen:
 
@@ -112,21 +92,15 @@ uv run jupyter notebook
 ## Projektstruktur
 
 - `docs/`: Dokumentation
-- `images`: Bild
 - `src/`: Quellcode-Verzeichnis
-  - `resources/`: Quelle von images und icons
   - `Dashboard_web.py`: Hauptmenü in Web
-  - `Dashboard.py`: Hauptmenü
   - `Diodenkennlinie.ipynb`: Jupyter Notebook für Diodenkennlinie
   - `DMM_web.py`: Digitalmultimeter in Web
-  - `DMM.py`: Dashboard für Digitalmultimeter
   - `Filterkennlinie.ipynb`: Jupyter Notebook für Filterkennlinie
   - `Funktionsgenerator_AD9833.py`: Datei zu Erzeugung der Signale mit AD9833
   - `Funktionsgenerator_web.py`: Erzeugung der Signale mit AD9833 in Web
-  - `Funktionsgenerator.py`: Dashboard zu Erzeugung der Signale
-  - `Netzteilfunktion.py`: Dashboard für Netzteilfunktion
+  - `Netzteil_web.py`: Netzteilfunktion in Web
   - `Oszilloskop_web.py`: Oszilloskop in Web
-  - `Oszilloskop.py`: Dashboard für Oszilloskop
 - `.gitignore`: Bei commit ignorieren
 - `LICENSE`: MIT License
 - `pyproject.toml`: Abhängigkeiten und Pakete
