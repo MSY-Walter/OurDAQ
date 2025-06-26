@@ -30,6 +30,7 @@ Das System bietet folgende Standard-Messroutinen:
 - Und Folgende Python-Pakete:
   - `daqhats>=1.4.1.0`
   - `dash>=3.0.4`
+  - `gpiod>=2.3.0`
   - `matplotlib>=3.10.3`
   - `notebook>=7.4.2`
   - `numpy>=2.2.5`
