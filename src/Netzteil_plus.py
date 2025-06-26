@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-
 from __future__ import print_function
 import spidev
 import time
-import lgpio  # RPi.GPIO durch lgpio ersetzt
+import lgpio
 
 from sys import stdout
 from daqhats import mcc118, OptionFlags, HatIDs, HatError

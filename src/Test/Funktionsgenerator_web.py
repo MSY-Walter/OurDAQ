@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 Web-basierter Funktionsgenerator für AD9833 mit Dash
-Verwendet lgpio anstelle von RPi.GPIO
 KORRIGIERTE VERSION - Löst das Problem der einmaligen Konfiguration
 """
 
@@ -102,7 +101,7 @@ def init_AD9833():
         time.sleep(0.01)
         
         logger.info("AD9833 vollständige Reset-Sequenz abgeschlossen")
-        return True, "AD9833 erfolgreich initialisiert mit lgpio"
+        return True, "AD9833 erfolgreich initialisiert"
         
     except Exception as e:
         logger.error(f"Initialisierungsfehler: {str(e)}")
@@ -243,7 +242,7 @@ def cleanup():
         pass
     finally:
         cleanup_existing_connections()
-        logger.info("Cleanup mit lgpio abgeschlossen")
+        logger.info("Cleanup abgeschlossen")
 
 def get_ip_address():
     """Abrufen der IP-Adresse"""
@@ -262,9 +261,9 @@ app.title = "AD9833 Funktionsgenerator"
 app.layout = html.Div([
     # Header
     html.Div([
-        html.H1("🌊 AD9833 Funktionsgenerator", 
+        html.H1("AD9833 Funktionsgenerator", 
                 style={'color': '#2c3e50', 'marginBottom': '5px', 'fontSize': '28px'}),
-        html.P(f"Webinterface für Signalgenerierung mit lgpio{'(Simulation)' if SIMULATION_MODE else ''}", 
+        html.P(f"Webinterface für Signalgenerierung {'(Simulation)' if SIMULATION_MODE else ''}", 
                style={'color': '#7f8c8d', 'fontSize': '14px', 'margin': '0'})
     ], style={'textAlign': 'center', 'marginBottom': '25px'}),
     
@@ -272,13 +271,13 @@ app.layout = html.Div([
     html.Div([
         # Wellenform-Auswahl
         html.Div([
-            html.H3("📊 Wellenform", style={'color': '#34495e', 'marginBottom': '10px'}),
+            html.H3("Wellenform", style={'color': '#34495e', 'marginBottom': '10px'}),
             dcc.RadioItems(
                 id='wellenform-radio',
                 options=[
-                    {'label': '🌊 Sinuswelle', 'value': SINE_WAVE},
-                    {'label': '📐 Dreieckswelle', 'value': TRIANGLE_WAVE},
-                    {'label': '⬜ Rechteckwelle', 'value': SQUARE_WAVE}
+                    {'label': 'Sinuswelle', 'value': SINE_WAVE},
+                    {'label': 'Dreieckswelle', 'value': TRIANGLE_WAVE},
+                    {'label': 'Rechteckwelle', 'value': SQUARE_WAVE}
                 ],
                 value=SINE_WAVE,
                 labelStyle={'display': 'block', 'marginBottom': '8px', 'fontSize': '16px'},
@@ -372,13 +371,12 @@ def handle_configuration(n_clicks, wellenform, frequenz):
             
             config_text = f"""✅ KONFIGURATION ERFOLGREICH
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🌊 Wellenform: {wellenform_name}
-⚡ Frequenz: {frequenz} Hz
-🚀 Status: Signalausgabe aktiv
-📡 Hardware: {'Simulation' if SIMULATION_MODE else 'AD9833'}
-🔧 Bibliothek: lgpio
+Wellenform: {wellenform_name}
+Frequenz: {frequenz} Hz
+Status: Signalausgabe aktiv
+Hardware: {'Simulation' if SIMULATION_MODE else 'AD9833'}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✨ Bereit für weitere Konfigurationen"""
+Bereit für weitere Konfigurationen"""
             
             return (config_text, {**base_style, 'border': '2px solid #27ae60', 'color': '#27ae60'})
         else:
@@ -395,5 +393,5 @@ import atexit
 atexit.register(cleanup)
 
 if __name__ == '__main__':
-    logger.info(f"Starte Funktionsgenerator im {'Simulation' if SIMULATION_MODE else 'Hardware'} Modus mit lgpio")
+    logger.info(f"Starte Funktionsgenerator im {'Simulation' if SIMULATION_MODE else 'Hardware'} Modus")
     app.run(host=get_ip_address(), port=8060, debug=True, use_reloader=False)

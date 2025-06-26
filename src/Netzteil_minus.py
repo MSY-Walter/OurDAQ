@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
-
 import spidev
 import time
-import lgpio  # RPi.GPIO durch lgpio ersetzt
+import lgpio
 
 # Globale Variable für das lgpio-Handle
 h_gpio = None

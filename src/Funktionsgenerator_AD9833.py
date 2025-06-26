@@ -33,7 +33,7 @@ gpio_handle = None
 spi = None
 
 def init_AD9833():
-    """Initialisiert GPIO und SPI für AD9833 mit lgpio"""
+    """Initialisiert GPIO und SPI für AD9833"""
     global gpio_handle, spi
     
     try:
@@ -65,7 +65,7 @@ def init_AD9833():
         time.sleep(0.1)  # Warten bis Reset abgeschlossen
         print("   ✅ Initiales Reset abgeschlossen")
         
-        print("✅ AD9833 erfolgreich mit lgpio initialisiert")
+        print("✅ AD9833 erfolgreich initialisiert")
         return True
         
     except Exception as e:
@@ -76,7 +76,7 @@ def init_AD9833():
 
 def write_to_AD9833(data):
     """
-    Sendet 16-Bit Daten an AD9833 mit lgpio
+    Sendet 16-Bit Daten an AD9833
     
     Kritische Timing-Sequenz:
     1. FSYNC auf LOW (Übertragung startet)
