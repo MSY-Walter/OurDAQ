@@ -1,414 +1,421 @@
 # -*- coding: utf-8 -*-
-import sys
-sys.stdout.reconfigure(encoding='utf-8')
 """
-Verbesserte Version des OurDAQ Dashboards
-Mit Onglet-basierter Navigation und integrierter Funktionalität
+Optimiertes OurDAQ Dashboard - Moderne, saubere Version mit Systemübersicht
 """
 
+import sys
 import socket
 import subprocess
 import os
 import time
 import atexit
-import threading
 from datetime import datetime
+from dataclasses import dataclass, field
+from typing import Dict, Optional, List
+from pathlib import Path
 import requests
-from dash import Dash, dcc, html, Input, Output, callback, clientside_callback
-from dash.exceptions import PreventUpdate
-import plotly.graph_objs as go
-import plotly.express as px
-
-# =============================================================================
-# DEBUG UND SIMULATION EINSTELLUNGEN
-# =============================================================================
-
-DEBUG_MODE = True
-SIMULATION_MODE = False
-CHECK_SCRIPTS_EXIST = True
+from dash import Dash, dcc, html, Input, Output, State
+import webbrowser
 
 # =============================================================================
 # KONFIGURATION
 # =============================================================================
 
+@dataclass
+class ModuleConfig:
+    name: str
+    script: Optional[str] = None
+    port: Optional[int] = None
+    color: str = '#3498db'
+    icon: str = '📋'
+    type: str = 'dash_app'
+    
+@dataclass 
+class SystemConfig:
+    debug: bool = True
+    simulation: bool = False
+    host: str = '0.0.0.0'
+    port: int = 8000
+    title: str = 'OurDAQ Datenerfassungssystem'
+
+# Module Definitionen
 MODULES = {
-    'dmm': {
-        'name': 'Digitalmultimeter',
-        'script': 'DMM_web.py',
-        'port': 8050,
-        'color': '#3498db',
-        'icon': '📊',
-        'type': 'dash_app'
-    },
-    'funktionsgenerator': {
-        'name': 'Funktionsgenerator',
-        'script': 'Funktionsgenerator_web.py',
-        'port': 8060,
-        'color': '#e74c3c',
-        'icon': '🌊',
-        'type': 'dash_app'
-    },
-    'oszilloskop': {
-        'name': 'Oszilloskop',
-        'script': 'Oszilloskop_web.py',
-        'port': 8080,
-        'color': '#27ae60',
-        'icon': '📈',
-        'type': 'dash_app'
-    },
-    'netzteil': {
-        'name': 'Netzteil',
-        'script': 'Netzteil_web.py',
-        'port': 8072,
-        'color': '#f39c12',
-        'icon': '⚡',
-        'type': 'dash_app'
-    },
-    'kennlinie': {
-        'name': 'Kennlinien',
-        'color': '#9b59b6',
-        'icon': '📋',
-        'type': 'integrated'
-    }
+    'dmm': ModuleConfig('Digitalmultimeter', 'DMM_web.py', 8050, '#3498db', '📏'),
+    'funktionsgenerator': ModuleConfig('Funktionsgenerator', 'Funktionsgenerator_web.py', 8060, '#e74c3c', '🌊'),
+    'oszilloskop': ModuleConfig('Oszilloskop', 'Oszilloskop_web.py', 8080, '#27ae60', '📈'),
+    'netzteil': ModuleConfig('Netzteil', 'Netzteil_web.py', 8072, '#f39c12', '⚡'),
+    'kennlinie': ModuleConfig('Kennlinien', type='integrated', color='#9b59b6', icon='📋')
 }
 
-DASHBOARD_CONFIG = {
-    'host': '0.0.0.0',
-    'port': 8000,
-    'debug': False,
-    'title': 'OurDAQ Datenerfassungssystem'
-}
+CONFIG = SystemConfig()
 
 # =============================================================================
-# DEBUG UND HILFSFUNKTIONEN
+# UTILITIES
 # =============================================================================
 
-def debug_print(message):
-    """Debug-Ausgabe nur wenn DEBUG_MODE aktiviert ist"""
-    if DEBUG_MODE:
-        timestamp = datetime.now().strftime('%H:%M:%S')
-        # Use UTF-8 encoding with replace to handle all characters
-        safe_message = message.encode('utf-8', errors='replace').decode('utf-8')
-        print(f"[{timestamp}] DEBUG: {safe_message}")
+class Logger:
+    @staticmethod
+    def debug(message: str):
+        if CONFIG.debug:
+            timestamp = datetime.now().strftime('%H:%M:%S')
+            print(f"[{timestamp}] {message}")
+    
+    @staticmethod
+    def info(message: str):
+        print(f"ℹ️  {message}")
+    
+    @staticmethod
+    def error(message: str):
+        print(f"❌ {message}")
 
-def is_raspberry_pi():
-    """Überprüft, ob das System ein Raspberry Pi ist"""
-    try:
-        with open('/proc/cpuinfo', 'r') as f:
-            cpuinfo = f.read()
-        if 'Raspberry Pi' in cpuinfo:
-            debug_print("Raspberry Pi hardware detected")
-            return True
-        else:
-            debug_print("No Raspberry Pi hardware detected")
+class SystemUtils:
+    @staticmethod
+    def is_raspberry_pi() -> bool:
+        try:
+            return 'Raspberry Pi' in Path('/proc/cpuinfo').read_text()
+        except FileNotFoundError:
             return False
-    except FileNotFoundError:
-        debug_print("Cannot access /proc/cpuinfo, assuming not Raspberry Pi")
-        return False
-    except Exception as e:
-        debug_print(f"Error checking for Raspberry Pi: {e}")
-        return False
-
-def set_simulation_mode():
-    """Setzt SIMULATION_MODE basierend auf Raspberry Pi Erkennung"""
-    global SIMULATION_MODE
-    SIMULATION_MODE = not is_raspberry_pi()
-    debug_print(f"Simulation Mode: {'AN' if SIMULATION_MODE else 'AUS'}")
-    return SIMULATION_MODE
-
-def get_ip_address():
-    """Hilfsfunktion zum Abrufen der IP-Adresse des Geräts"""
-    ip_address = '127.0.0.1'
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     
-    try:
-        sock.connect(('1.1.1.1', 1))
-        ip_address = sock.getsockname()[0]
-        debug_print(f"IP-Adresse ermittelt: {ip_address}")
-    except Exception as e:
-        debug_print(f"Fehler beim Ermitteln der IP-Adresse, verwende localhost: {e}")
-    finally:
-        sock.close()
+    @staticmethod
+    def get_ip_address() -> str:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.connect(('1.1.1.1', 1))
+                return sock.getsockname()[0]
+        except Exception:
+            return '127.0.0.1'
     
-    return ip_address
-
-def ist_port_verfuegbar(port):
-    """Überprüft, ob ein Port verfügbar ist"""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.bind(('', port))
-        debug_print(f"Port {port} ist verfügbar")
-        return True
-    except socket.error as e:
-        debug_print(f"Port {port} nicht verfügbar: {e}")
-        return False
-    finally:
-        sock.close()
+    @staticmethod
+    def is_port_available(port: int) -> bool:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.bind(('', port))
+                return True
+        except socket.error:
+            return False
 
 # =============================================================================
-# PROZESS MANAGER
+# PROCESS MANAGER
 # =============================================================================
 
-class AdvancedProcessManager:
+@dataclass
+class ProcessInfo:
+    process: subprocess.Popen
+    port: int
+    started_at: datetime = field(default_factory=datetime.now)
+    restart_count: int = 0
+
+class ProcessManager:
     def __init__(self):
-        self.processes = {}
-        self.monitoring = True
-        self.ip_address = get_ip_address()
-        self.active_modules = set()
-        set_simulation_mode()
+        self.processes: Dict[str, ProcessInfo] = {}
+        self.ip_address = SystemUtils.get_ip_address()
+        CONFIG.simulation = not SystemUtils.is_raspberry_pi()
+        self.system_log = []
+        self.start_time = datetime.now()
+        Logger.info(f"Simulation Mode: {'AN' if CONFIG.simulation else 'AUS'}")
+        self.log_message("System gestartet", "info")
+    
+    def start_module(self, module_id: str) -> bool:
+        if module_id not in MODULES:
+            error_msg = f"Modul {module_id} nicht gefunden"
+            Logger.error(error_msg)
+            self.log_message(error_msg, "error")
+            return False
         
-    def start_process(self, name, command, port, service_type='unknown'):
-        """Startet einen Prozess"""
-        debug_print(f"Versuche {name} zu starten...")
+        config = MODULES[module_id]
+        if config.type != 'dash_app' or not config.script or not config.port:
+            return False
         
-        if not ist_port_verfuegbar(port):
-            debug_print(f"Port {port} für {name} bereits belegt")
+        if not SystemUtils.is_port_available(config.port):
+            error_msg = f"Port {config.port} bereits belegt für {config.name}"
+            Logger.error(error_msg)
+            self.log_message(error_msg, "error")
+            return False
+        
+        script_path = Path(__file__).parent / config.script
+        if not script_path.exists():
+            error_msg = f"Script nicht gefunden: {script_path}"
+            Logger.error(error_msg)
+            self.log_message(error_msg, "error")
             return False
         
         try:
-            prozess = subprocess.Popen(
+            command = [sys.executable, str(script_path)]
+            if CONFIG.simulation:
+                command.append('--simulate')
+            
+            env = os.environ.copy()
+            env['PYTHONPATH'] = str(Path(__file__).parent)
+            env['DASH_HOST'] = '0.0.0.0'
+            env['DASH_PORT'] = str(config.port)
+            
+            process = subprocess.Popen(
                 command, 
                 stdout=subprocess.PIPE, 
-                stderr=subprocess.PIPE,
+                stderr=subprocess.PIPE, 
                 text=True,
-                bufsize=1
+                env=env,
+                cwd=str(Path(__file__).parent)
             )
             
-            time.sleep(1)
-            poll_result = prozess.poll()
-            
-            if poll_result is not None:
-                debug_print(f"Prozess {name} sofort beendet")
+            time.sleep(3)
+            if process.poll() is not None:
+                stderr_output = process.stderr.read()
+                error_msg = f"Prozess {module_id} sofort beendet. Fehler: {stderr_output}"
+                Logger.error(error_msg)
+                self.log_message(error_msg, "error")
                 return False
             
-            self.processes[name] = {
-                'process': prozess,
-                'port': port,
-                'command': command,
-                'service_type': service_type,
-                'started_at': datetime.now(),
-                'restart_count': 0
-            }
-            
-            self.active_modules.add(name)
-            debug_print(f"✅ {name} erfolgreich gestartet auf Port {port}")
+            self.processes[module_id] = ProcessInfo(process, config.port)
+            success_msg = f"✅ {config.name} gestartet auf Port {config.port}"
+            Logger.info(success_msg)
+            self.log_message(success_msg, "success")
             return True
             
         except Exception as e:
-            debug_print(f"❌ Fehler beim Starten von {name}: {e}")
+            error_msg = f"Fehler beim Starten von {module_id}: {e}"
+            Logger.error(error_msg)
+            self.log_message(error_msg, "error")
             return False
     
-    def stop_process(self, name):
-        """Stoppt einen spezifischen Prozess"""
-        if name in self.processes:
-            try:
-                self.processes[name]['process'].terminate()
-                del self.processes[name]
-                self.active_modules.discard(name)
-                debug_print(f"✅ {name} gestoppt")
-                return True
-            except Exception as e:
-                debug_print(f"❌ Fehler beim Stoppen von {name}: {e}")
-                return False
-        return False
+    def stop_module(self, module_id: str) -> bool:
+        if module_id not in self.processes:
+            return False
+        
+        try:
+            process_info = self.processes[module_id]
+            process_info.process.terminate()
+            process_info.process.wait(timeout=2)
+            del self.processes[module_id]
+            success_msg = f"✅ {MODULES[module_id].name} gestoppt"
+            Logger.info(success_msg)
+            self.log_message(success_msg, "success")
+            return True
+        except Exception as e:
+            error_msg = f"Fehler beim Stoppen von {module_id}: {e}"
+            Logger.error(error_msg)
+            self.log_message(error_msg, "error")
+            return False
     
-    def start_module(self, module_id):
-        """Startet ein spezifisches Modul"""
-        if module_id not in MODULES:
-            return False
-            
-        config = MODULES[module_id]
-        if config['type'] != 'dash_app':
-            return False
-            
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        script_path = os.path.join(current_dir, config['script'])
-        
-        if not os.path.exists(script_path):
-            debug_print(f"Script nicht gefunden: {script_path}")
-            return False
-        
-        command = [sys.executable, script_path]
-        if SIMULATION_MODE:
-            command.append('--simulate')
-        
-        return self.start_process(module_id, command, config['port'], 'dash_app')
-    
-    def get_module_status(self):
-        """Liefert Status aller Module"""
+    def get_module_status(self) -> Dict:
         status = {}
-        
         for module_id, config in MODULES.items():
-            if config['type'] == 'integrated':
+            if config.type == 'integrated':
                 status[module_id] = {
-                    'name': config['name'],
-                    'status': 'integrated',
-                    'active': True,
-                    'type': 'integrated'
+                    'name': config.name, 'status': 'integrated', 
+                    'active': True, 'type': 'integrated'
                 }
             else:
                 is_running = module_id in self.processes
                 service_online = False
                 
-                if is_running:
+                if is_running and config.port:
                     try:
-                        response = requests.get(f'http://{self.ip_address}:{config["port"]}', timeout=2)
+                        response = requests.get(f'http://{self.ip_address}:{config.port}/', timeout=2)
                         service_online = response.status_code == 200
                     except:
                         pass
                 
                 status[module_id] = {
-                    'name': config['name'],
-                    'port': config.get('port', 0),
+                    'name': config.name,
+                    'port': config.port,
                     'status': 'online' if service_online else ('starting' if is_running else 'offline'),
                     'active': is_running,
-                    'type': config['type']
+                    'type': config.type,
+                    'hardware_available': 'Yes' if not CONFIG.simulation else 'Simulated'
                 }
-        
         return status
     
-    def cleanup_all(self):
-        """Cleanup aller Prozesse"""
-        debug_print("🧹 Starte Cleanup...")
-        self.monitoring = False
+    def get_system_info(self) -> Dict:
+        uptime = datetime.now() - self.start_time
+        return {
+            'ip_address': self.ip_address,
+            'mode': 'Simulation' if CONFIG.simulation else 'Hardware',
+            'hardware_available': not CONFIG.simulation,
+            'uptime': str(uptime).split('.')[0],
+            'dashboard_port': CONFIG.port,
+            'debug_mode': CONFIG.debug,
+            'system_time': datetime.now().strftime('%H:%M:%S'),
+            'raspberry_pi': SystemUtils.is_raspberry_pi()
+        }
+    
+    def log_message(self, message: str, level: str = "info"):
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        self.system_log.append({
+            'timestamp': timestamp,
+            'message': message,
+            'level': level
+        })
+        if len(self.system_log) > 50:
+            self.system_log = self.system_log[-50:]
+    
+    def get_system_log(self) -> List[Dict]:
+        return self.system_log
+    
+    def scan_ports(self) -> Dict[int, bool]:
+        port_status = {}
+        for module_id, config in MODULES.items():
+            if config.port:
+                port_status[config.port] = SystemUtils.is_port_available(config.port)
+        return port_status
+    
+    def stop_all_modules(self) -> int:
+        stopped_count = 0
+        for module_id in list(self.processes.keys()):
+            if self.stop_module(module_id):
+                stopped_count += 1
+        self.log_message(f"{stopped_count} Module gestoppt", "info")
+        return stopped_count
+    
+    def restart_all_modules(self) -> int:
+        self.stop_all_modules()
+        time.sleep(2)
+        started_count = 0
+        for module_id, config in MODULES.items():
+            if config.type == 'dash_app':
+                if self.start_module(module_id):
+                    started_count += 1
+        self.log_message(f"{started_count} Module gestartet", "info")
+        return started_count
+    
+    def cleanup(self):
+        Logger.info("🧹 Cleanup gestartet...")
+        self.stop_all_modules()
+
+# =============================================================================
+# UI COMPONENTS
+# =============================================================================
+
+class UIComponents:
+    @staticmethod
+    def create_header(ip_address: str) -> html.Div:
+        return html.Div([
+            html.H1([
+                html.Span("🔬 ", style={'fontSize': '40px'}),
+                CONFIG.title
+            ], style={
+                'textAlign': 'center', 'color': 'white', 'margin': '0',
+                'fontSize': '32px', 'fontWeight': '300'
+            }),
+            html.Div(id='header-status', style={
+                'textAlign': 'center', 'color': 'white', 'fontSize': '14px',
+                'marginTop': '10px', 'opacity': '0.9'
+            })
+        ], style={
+            'background': 'linear-gradient(135deg, #2c3e50 0%, #34495e 100%)',
+            'padding': '30px 20px', 'marginBottom': '0',
+            'boxShadow': '0 2px 10px rgba(0,0,0,0.1)'
+        })
+    
+    @staticmethod
+    def create_system_overview(system_info: Dict) -> html.Div:
+        """Erstellt die Systemübersicht mit Raspberry Pi-Status im Hardware-Rechteck"""
+        hardware_color = '#27ae60' if system_info['hardware_available'] else '#e74c3c'
+        hardware_icon = '🔧' if system_info['hardware_available'] else '🎭'
+        hardware_text = 'Hardware verfügbar' if system_info['hardware_available'] else 'Simulation aktiv'
+        raspberry_pi_text = 'Raspberry Pi erkannt' if system_info['raspberry_pi'] else 'Kein Raspberry Pi'
         
-        for name, prozess_info in self.processes.items():
-            try:
-                if prozess_info['process'].poll() is None:
-                    prozess_info['process'].terminate()
-                    debug_print(f"✅ Prozess {name} beendet")
-            except Exception as e:
-                debug_print(f"❌ Fehler beim Beenden von {name}: {e}")
+        return html.Div([
+            html.H2("🖥️ Systemübersicht", style={'color': '#2c3e50', 'marginBottom': '20px', 'textAlign': 'center'}),
+            html.Div([
+                html.Div([
+                    html.H4("🌐 Netzwerk", style={'color': '#3498db', 'margin': '0 0 10px 0'}),
+                    html.P(f"IP-Adresse: {system_info['ip_address']}", style={'margin': '5px 0'}),
+                    html.P(f"Laufzeit: {system_info['uptime']}", style={'margin': '5px 0'})
+                ], style={'flex': '1', 'margin': '10px', 'padding': '20px', 'backgroundColor': '#f8f9fa', 
+                         'borderRadius': '10px', 'border': '2px solid #3498db'}),
+                html.Div([
+                    html.H4(f"{hardware_icon} Hardware", style={'color': hardware_color, 'margin': '0 0 10px 0'}),
+                    html.P(hardware_text, style={'margin': '5px 0', 'fontWeight': 'bold', 'color': hardware_color}),
+                    html.P(f"Raspberry Pi: {raspberry_pi_text}", style={'margin': '5px 0', 'color': hardware_color}),
+                    html.P(f"Dashboard Port: {system_info['dashboard_port']}", style={'margin': '5px 0'})
+                ], style={'flex': '1', 'margin': '10px', 'padding': '20px', 'backgroundColor': '#f8f9fa', 
+                         'borderRadius': '10px', 'border': f'2px solid {hardware_color}'})
+            ], style={'display': 'flex', 'flexWrap': 'wrap'})
+        ], style={
+            'backgroundColor': 'white', 'padding': '20px', 'borderRadius': '12px',
+            'marginBottom': '25px', 'boxShadow': '0 4px 12px rgba(0,0,0,0.1)'
+        })
+    
+    @staticmethod
+    def create_navigation_buttons(ip_address: str) -> html.Div:
+        buttons = []
+        button_style = {
+            'backgroundColor': '#2c3e50', 'color': 'white', 'border': 'none',
+            'padding': '25px 50px', 'borderRadius': '15px', 'cursor': 'pointer',
+            'fontSize': '20px', 'margin': '15px', 'display': 'inline-block',
+            'textAlign': 'center', 'textDecoration': 'none',
+            'boxShadow': '0 4px 8px rgba(0,0,0,0.1)',
+            'transition': 'all 0.3s ease'
+        }
+        
+        for module_id, config in MODULES.items():
+            if config.type == 'dash_app' and config.port:
+                buttons.append(
+                    html.A([config.icon, ' ', config.name],
+                           href=f"http://{ip_address}:{config.port}",
+                           target="_blank",
+                           style={**button_style, 'backgroundColor': config.color})
+                )
+            elif config.type == 'integrated':
+                buttons.append(
+                    html.Button([config.icon, ' ', config.name],
+                               id=f'button-{module_id}',  # Geänderte ID für bessere Eindeutigkeit
+                               style={**button_style, 'backgroundColor': config.color})
+                )
+        
+        return html.Div([
+            html.H2("🚀 Module & Funktionen", style={'color': '#2c3e50', 'marginBottom': '25px', 'textAlign': 'center'}),
+            html.Div(buttons, style={'textAlign': 'center'})
+        ], style={
+            'backgroundColor': 'white', 'padding': '25px', 'borderRadius': '15px',
+            'marginBottom': '30px', 'boxShadow': '0 4px 15px rgba(0,0,0,0.1)'
+        })
 
 # =============================================================================
 # DASH APP
 # =============================================================================
 
-process_manager = AdvancedProcessManager()
-
+process_manager = ProcessManager()
 app = Dash(__name__, suppress_callback_exceptions=True)
-app.title = DASHBOARD_CONFIG['title']
+app.title = CONFIG.title
 
-# CSS Styles
-tab_style = {
-    'borderBottom': '1px solid #d6d6d6',
-    'padding': '10px 20px',
-    'fontWeight': 'bold',
-    'fontSize': '16px',
-    'backgroundColor': '#f8f9fa'
-}
-
-tab_selected_style = {
-    'borderTop': '3px solid #2c3e50',
-    'borderBottom': '1px solid #d6d6d6',
-    'backgroundColor': '#ffffff',
-    'color': '#2c3e50',
-    'padding': '10px 20px',
-    'fontWeight': 'bold',
-    'fontSize': '16px'
-}
+# CSS mit Hover-Effekten
+app.index_string = """
+<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <style>
+            a:hover, button:hover { transform: scale(1.05); opacity: 0.9; }
+            .status-card { transition: all 0.3s ease; }
+            .status-card:hover { transform: translateY(-5px); }
+        </style>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>{%config%}{%scripts%}{%renderer%}</footer>
+    </body>
+</html>
+"""
 
 # Layout
 app.layout = html.Div([
-    # Header
+    UIComponents.create_header(process_manager.ip_address),
     html.Div([
-        html.H1([
-            html.Span("🔬 ", style={'fontSize': '40px'}),
-            DASHBOARD_CONFIG['title']
-        ], style={
-            'textAlign': 'center', 
-            'color': 'white', 
-            'margin': '0',
-            'fontSize': '32px',
-            'fontWeight': '300'
-        }),
-        
-        # Status Bar
-        html.Div(id='header-status', style={
-            'textAlign': 'center',
-            'color': 'white',
-            'fontSize': '14px',
-            'marginTop': '10px',
-            'opacity': '0.9'
-        })
+        html.Div(id='system-overview'),
+        html.Div(id='navigation-buttons'),
+        html.Div(id='main-content')
     ], style={
-        'background': 'linear-gradient(135deg, #2c3e50 0%, #34495e 100%)',
-        'padding': '30px 20px',
-        'marginBottom': '0',
-        'boxShadow': '0 2px 10px rgba(0,0,0,0.1)'
+        'maxWidth': '1200px', 'margin': '0 auto', 'padding': '20px',
+        'backgroundColor': '#f5f7fa', 'minHeight': '80vh'
     }),
-    
-    # Main Content
-    html.Div([
-        # Tabs
-        dcc.Tabs(
-            id="main-tabs",
-            value='overview',
-            children=[
-                dcc.Tab(
-                    label=f"📊 Übersicht",
-                    value='overview',
-                    style=tab_style,
-                    selected_style=tab_selected_style
-                ),
-                dcc.Tab(
-                    label=f"📊 DMM",
-                    value='dmm',
-                    style=tab_style,
-                    selected_style=tab_selected_style
-                ),
-                dcc.Tab(
-                    label=f"🌊 Funktionsgenerator",
-                    value='funktionsgenerator',
-                    style=tab_style,
-                    selected_style=tab_selected_style
-                ),
-                dcc.Tab(
-                    label=f"📈 Oszilloskop",
-                    value='oszilloskop',
-                    style=tab_style,
-                    selected_style=tab_selected_style
-                ),
-                dcc.Tab(
-                    label=f"⚡ Netzteil",
-                    value='netzteil',
-                    style=tab_style,
-                    selected_style=tab_selected_style
-                ),
-                dcc.Tab(
-                    label=f"📋 Kennlinien",
-                    value='kennlinie',
-                    style=tab_style,
-                    selected_style=tab_selected_style
-                )
-            ],
-            style={'marginBottom': '30px'}
-        ),
-        
-        # Tab Content
-        html.Div(id='tab-content')
-        
-    ], style={
-        'maxWidth': '1200px',
-        'margin': '0 auto',
-        'padding': '20px',
-        'backgroundColor': 'white',
-        'minHeight': '80vh'
-    }),
-    
-    # Update Intervals
-    dcc.Interval(
-        id='status-interval',
-        interval=5*1000,  # 5 seconds
-        n_intervals=0
-    ),
-    
-    dcc.Interval(
-        id='data-interval',
-        interval=1*1000,  # 1 second for data updates
-        n_intervals=0
-    )
-], style={'backgroundColor': '#f5f7fa', 'minHeight': '100vh'})
+    dcc.Interval(id='status-interval', interval=5000, n_intervals=0),
+    dcc.Store(id='current-view', data='overview')
+], style={'height': '100vh'})
 
 # =============================================================================
 # CALLBACKS
@@ -419,353 +426,166 @@ app.layout = html.Div([
     Input('status-interval', 'n_intervals')
 )
 def update_header_status(n_intervals):
-    status = process_manager.get_module_status()
-    active_count = sum(1 for s in status.values() if s['active'])
-    total_count = len([s for s in status.values() if s['type'] != 'integrated'])+1
-    
-    return f"🟢 {active_count}/{total_count} Module aktiv | 🌐 {process_manager.ip_address} | ⏰ {datetime.now().strftime('%H:%M:%S')}"
+    system_info = process_manager.get_system_info()
+    active_modules = len(process_manager.processes)
+    return f"🟢 {active_modules} Module aktiv | 🌐 {system_info['ip_address']} | ⏰ {system_info['system_time']}"
 
 @app.callback(
-    Output('tab-content', 'children'),
-    [Input('main-tabs', 'value'),
-     Input('status-interval', 'n_intervals')]
+    [Output('system-overview', 'children'),
+     Output('navigation-buttons', 'children')],
+    [Input('status-interval', 'n_intervals'),
+     Input('current-view', 'data')]
 )
-def render_tab_content(active_tab, n_intervals):
-    if active_tab == 'overview':
-        return create_overview_content()
-    elif active_tab == 'kennlinie':
-        return create_kennlinie_content()
-    elif active_tab in MODULES:
-        return create_module_content(active_tab)
+def update_system_display(n_intervals, current_view):
+    system_info = process_manager.get_system_info()
+    overview = UIComponents.create_system_overview(system_info)
+    
+    if current_view == 'overview':
+        buttons = UIComponents.create_navigation_buttons(process_manager.ip_address)
     else:
-        return html.Div("Tab nicht gefunden")
+        buttons = html.Div()
+    
+    return overview, buttons
 
-def create_overview_content():
-    """Erstellt Übersichts-Content"""
-    status = process_manager.get_module_status()
-    
-    # Status Cards
-    status_cards = []
-    for module_id, module_status in status.items():
-        if module_status['type'] == 'integrated':
-            continue
-            
-        config = MODULES[module_id]
-        
-        if module_status['status'] == 'online':
-            status_color = '#27ae60'
-            status_icon = '🟢'
-            status_text = 'Online'
-        elif module_status['status'] == 'starting':
-            status_color = '#f39c12'
-            status_icon = '🟡'
-            status_text = 'Startet...'
-        else:
-            status_color = '#e74c3c'
-            status_icon = '🔴'
-            status_text = 'Offline'
-        
-        # Control Buttons
-        if module_status['active']:
-            control_button = html.Button(
-                '⏹️ Stoppen',
-                id=f'stop-{module_id}',
-                className='control-button stop-button',
-                style={
-                    'backgroundColor': '#e74c3c',
-                    'color': 'white',
-                    'border': 'none',
-                    'padding': '8px 15px',
-                    'borderRadius': '5px',
-                    'cursor': 'pointer',
-                    'marginTop': '10px'
-                }
-            )
-        else:
-            control_button = html.Button(
-                '▶️ Starten',
-                id=f'start-{module_id}',
-                className='control-button start-button',
-                style={
-                    'backgroundColor': '#27ae60',
-                    'color': 'white',
-                    'border': 'none',
-                    'padding': '8px 15px',
-                    'borderRadius': '5px',
-                    'cursor': 'pointer',
-                    'marginTop': '10px'
-                }
-            )
-        
-        card = html.Div([
-            html.Div([
-                html.H3([
-                    config['icon'], ' ', config['name']
-                ], style={'margin': '0 0 10px 0', 'color': config['color']}),
-                
-                html.Div([
-                    html.Span(status_icon, style={'fontSize': '20px', 'marginRight':'10px'}),
-                    html.Span(status_text, style={'fontWeight': 'bold', 'color': status_color})
-                ], style={'marginBottom': '10px'}),
-                
-                html.P(f"Port: {module_status.get('port', 'N/A')}", 
-                      style={'margin': '5px 0', 'fontSize': '14px', 'color': '#7f8c8d'}),
-                
-                control_button
-            ])
-        ], style={
-            'border': f'2px solid {status_color}',
-            'borderRadius': '10px',
-            'padding': '20px',
-            'margin': '10px',
-            'width': '250px',
-            'display': 'inline-block',
-            'verticalAlign': 'top',
-            'backgroundColor': 'white',
-            'boxShadow': '0 2px 5px rgba(0,0,0,0.1)'
-        })
-        
-        status_cards.append(card)
-    
-    return html.Div([
-        html.H2("📊 System Übersicht", style={'color': '#2c3e50', 'marginBottom': '30px'}),
-        
-        # System Info
-        html.Div([
-            html.Div([
-                html.H4("🖥️ System Information", style={'color': '#34495e', 'marginBottom': '15px'}),
-                html.P(f"🔧 Debug Mode: {'AN' if DEBUG_MODE else 'AUS'}"),
-                html.P(f"🎭 Simulation Mode: {'AN' if SIMULATION_MODE else 'AUS'}"),
-                html.P(f"🌐 IP-Adresse: {process_manager.ip_address}"),
-                html.P(f"⏰ Letzte Aktualisierung: {datetime.now().strftime('%H:%M:%S')}")
-            ], style={
-                'backgroundColor': '#ecf0f1',
-                'padding': '20px',
-                'borderRadius': '10px',
-                'marginBottom': '30px'
-            })
-        ]),
-        
-        # Module Status
-        html.H3("📱 Module Status", style={'color': '#2c3e50', 'marginBottom': '20px'}),
-        html.Div(status_cards, style={'textAlign': 'center'})
-    ])
+@app.callback(
+    [Output('main-content', 'children'),
+     Output('current-view', 'data')],
+    [Input('button-kennlinie', 'n_clicks')],  # Angepasste ID
+    [State('current-view', 'data')],
+    prevent_initial_call=True
+)
+def handle_kennlinie_button(n_clicks, current_view):
+    if n_clicks and n_clicks > 0:
+        Logger.debug("Kennlinie-Button geklickt")
+        return create_kennlinie_content(), 'kennlinie'
+    return html.Div(), 'overview'
 
-def create_module_content(module_id):
-    """Erstellt Content für ein spezifisches Modul"""
-    config = MODULES[module_id]
-    status = process_manager.get_module_status()[module_id]
-    
-    if not status['active']:
-        return html.Div([
-            html.Div([
-                html.H2([config['icon'], ' ', config['name']], 
-                       style={'color': config['color'], 'textAlign': 'center'}),
-                html.Div([
-                    html.P("🔴 Modul ist nicht aktiv", 
-                          style={'fontSize': '18px', 'textAlign': 'center', 'color': '#e74c3c'}),
-                    html.Button(
-                        '▶️ Modul starten',
-                        id=f'start-{module_id}-inline',
-                        style={
-                            'backgroundColor': '#27ae60',
-                            'color': 'white',
-                            'border': 'none',
-                            'padding': '15px 30px',
-                            'borderRadius': '8px',
-                            'cursor': 'pointer',
-                            'fontSize': '16px',
-                            'margin': '20px'
-                        }
-                    )
-                ], style={'textAlign': 'center'})
-            ], style={
-                'backgroundColor': '#f8f9fa',
-                'padding': '40px',
-                'borderRadius': '10px',
-                'textAlign': 'center'
-            })
-        ])
-    
-    # Module is active - show iframe
-    module_url = f"http://{process_manager.ip_address}:{config['port']}"
-    
-    return html.Div([
-        html.Div([
-            html.H3([config['icon'], ' ', config['name']], 
-                   style={'color': config['color'], 'margin': '0', 'display': 'inline-block'}),
-            html.Div([
-                html.Span("🟢 Online", style={'color': '#27ae60', 'marginRight': '20px'}),
-                html.A("🔗 In neuem Tab öffnen", href=module_url, target="_blank",
-                      style={'color': '#3498db', 'textDecoration': 'none'})
-            ], style={'float': 'right', 'fontSize': '14px'})
-        ], style={'marginBottom': '20px', 'overflow': 'hidden'}),
-        
-        html.Iframe(
-            src=module_url,
-            style={
-                'width': '100%',
-                'height': '800px',
-                'border': '1px solid #ddd',
-                'borderRadius': '8px'
-            }
-        )
-    ])
+@app.callback(
+    [Output('main-content', 'children', allow_duplicate=True),
+     Output('current-view', 'data', allow_duplicate=True)],
+    [Input('back-to-overview', 'n_clicks')],
+    prevent_initial_call=True
+)
+def handle_back_button(n_clicks):
+    if n_clicks and n_clicks > 0:
+        Logger.debug("Zurück-Button geklickt")
+        return html.Div(), 'overview'
+    return html.Div(), 'overview'
 
 def create_kennlinie_content():
-    """Erstellt Content für Kennlinien-Tab"""
     return html.Div([
-        html.H2("📋 Kennlinien Messungen", style={'color': '#9b59b6', 'marginBottom': '30px'}),
-        
+        html.Div([
+            html.Button("← Zurück zur Übersicht", id="back-to-overview", 
+                       style={'backgroundColor': '#95a5a6', 'color': 'white', 'border': 'none',
+                             'padding': '10px 20px', 'borderRadius': '8px', 'cursor': 'pointer',
+                             'fontSize': '14px', 'marginBottom': '20px'})
+        ]),
+        html.H2("📋 Kennlinien Messungen", style={'color': '#9b59b6', 'marginBottom': '30px', 'textAlign': 'center'}),
+        html.P("Wählen Sie eine Messung aus, um das entsprechende Jupyter Notebook zu öffnen:",
+               style={'textAlign': 'center', 'fontSize': '16px', 'marginBottom': '40px', 'color': '#34495e'}),
         html.Div([
             html.Div([
-                html.H3("📊 Diodenkennlinie", style={'color': '#e74c3c'}),
-                html.P("Messung der Strom-Spannungs-Charakteristik von Dioden"),
-                html.Button(
-                    "🔬 Diodenkennlinie starten",
-                    id="start-diode-kennlinie",
-                    style={
-                        'backgroundColor': '#e74c3c',
-                        'color': 'white',
-                        'border': 'none',
-                        'padding': '15px 25px',
-                        'borderRadius': '8px',
-                        'cursor': 'pointer',
-                        'fontSize': '16px',
-                        'margin': '10px 0'
-                    }
-                )
-            ], style={
-                'backgroundColor': 'white',
-                'padding': '30px',
-                'borderRadius': '10px',
-                'margin': '10px',
-                'width': '45%',
-                'display': 'inline-block',
-                'verticalAlign': 'top',
-                'boxShadow': '0 2px 5px rgba(0,0,0,0.1)',
-                'border': '2px solid #e74c3c'
-            }),
-            
+                html.H3("📊 Diodenkennlinie", style={'color': '#e74c3c', 'marginBottom': '15px'}),
+                html.P("Messung der Strom-Spannungs-Charakteristik",
+                      style={'fontSize': '14px', 'color': '#7f8c8d', 'marginBottom': '20px'}),
+                html.Button("🔬 Notebook öffnen", id="start-diode", className="measurement-button",
+                       style={'backgroundColor': '#e74c3c', 'color': 'white', 'border': 'none',
+                             'padding': '18px 35px', 'borderRadius': '10px', 'cursor': 'pointer',
+                             'fontSize': '16px', 'fontWeight': 'bold'})
+            ], style={'backgroundColor': 'white', 'padding': '30px', 'borderRadius': '15px',
+                     'margin': '20px', 'boxShadow': '0 6px 20px rgba(0,0,0,0.1)',
+                     'textAlign': 'center', 'flex': '1', 'maxWidth': '400px'}),
             html.Div([
-                html.H3("🌊 Filterkennlinie", style={'color': '#3498db'}),
-                html.P("Frequenzgang-Messung von elektronischen Filtern"),
-                html.Button(
-                    "🔬 Filterkennlinie starten",
-                    id="start-filter-kennlinie",
-                    style={
-                        'backgroundColor': '#3498db',
-                        'color': 'white',
-                        'border': 'none',
-                        'padding': '15px 25px',
-                        'borderRadius': '8px',
-                        'cursor': 'pointer',
-                        'fontSize': '16px',
-                        'margin': '10px 0'
-                    }
-                )
-            ], style={
-                'backgroundColor': 'white',
-                'padding': '30px',
-                'borderRadius': '10px',
-                'margin': '10px',
-                'width': '45%',
-                'display': 'inline-block',
-                'verticalAlign': 'top',
-                'boxShadow': '0 2px 5px rgba(0,0,0,0.1)',
-                'border': '2px solid #3498db'
-            })
-        ], style={'textAlign': 'center'}),
-        
-        # Results Area
+                html.H3("🌊 Filterkennlinie", style={'color': '#3498db', 'marginBottom': '15px'}),
+                html.P("Frequenzgang-Messung von Filtern",
+                      style={'fontSize': '14px', 'color': '#7f8c8d', 'marginBottom': '20px'}),
+                html.Button("🔬 Notebook öffnen", id="start-filter", className="measurement-button",
+                       style={'backgroundColor': '#3498db', 'color': 'white', 'border': 'none',
+                             'padding': '18px 35px', 'borderRadius': '10px', 'cursor': 'pointer',
+                             'fontSize': '16px', 'fontWeight': 'bold'})
+            ], style={'backgroundColor': 'white', 'padding': '30px', 'borderRadius': '15px',
+                     'margin': '20px', 'boxShadow': '0 6px 20px rgba(0,0,0,0.1)',
+                     'textAlign': 'center', 'flex': '1', 'maxWidth': '400px'})
+        ], style={'display': 'flex', 'justifyContent': 'center', 'alignItems': 'stretch', 'flexWrap': 'wrap'}),
         html.Div(id='kennlinie-results', style={'marginTop': '30px'})
-    ])
+    ], style={
+        'backgroundColor': 'white', 'padding': '25px', 'borderRadius': '10px',
+        'boxShadow': '0 4px 10px rgba(0,0,0,0.1)'
+    })
 
-# Module Control Callbacks
-for module_id in MODULES:
-    if MODULES[module_id]['type'] == 'dash_app':
-        # Start button callback
-        @app.callback(
-            Output(f'start-{module_id}', 'children'),
-            Input(f'start-{module_id}', 'n_clicks'),
-            prevent_initial_call=True
-        )
-        def start_module_callback(n_clicks, module_id=module_id):
-            if n_clicks:
-                success = process_manager.start_module(module_id)
-                if success:
-                    return '✅ Gestartet'
-                else:
-                    return '❌ Fehler'
-            return '▶️ Starten'
-        
-        # Stop button callback
-        @app.callback(
-            Output(f'stop-{module_id}', 'children'),
-            Input(f'stop-{module_id}', 'n_clicks'),
-            prevent_initial_call=True
-        )
-        def stop_module_callback(n_clicks, module_id=module_id):
-            if n_clicks:
-                success = process_manager.stop_process(module_id)
-                if success:
-                    return '✅ Gestoppt'
-                else:
-                    return '❌ Fehler'
-            return '⏹️ Stoppen'
-
-# Kennlinie Callbacks
 @app.callback(
     Output('kennlinie-results', 'children'),
-    [Input('start-diode-kennlinie', 'n_clicks'),
-     Input('start-filter-kennlinie', 'n_clicks')],
+    [Input('start-diode', 'n_clicks'),
+     Input('start-filter', 'n_clicks')],
     prevent_initial_call=True
 )
 def handle_kennlinie_buttons(diode_clicks, filter_clicks):
-    ctx = callback_context
+    ctx = callback_context.get_triggered()
     if not ctx.triggered:
         return ""
     
     button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    Logger.debug(f"Kennleisten-Button geklickt: {button_id}")
     
-    if button_id == 'start-diode-kennlinie':
-        return html.Div([
-            html.H4("🔬 Diodenkennlinie Messung gestartet", style={'color': '#e74c3c'}),
-            html.P("Die Messung läuft... Ergebnisse werden hier angezeigt."),
-            # Hier würden Sie die tatsächliche Diodenkennlinie-Logik implementieren
-        ], style={'backgroundColor': '#f8f9fa', 'padding': '20px', 'borderRadius': '8px'})
+    notebook_name = None
+    if button_id == 'start-diode':
+        notebook_name = 'Diodenkennlinie.ipynb'
+    elif button_id == 'start-filter':
+        notebook_name = 'Filterkennlinie.ipynb'
     
-    elif button_id == 'start-filter-kennlinie':
-        return html.Div([
-            html.H4("🔬 Filterkennlinie Messung gestartet", style={'color': '#3498db'}),
-            html.P("Die Messung läuft... Ergebnisse werden hier angezeigt."),
-            # Hier würden Sie die tatsächliche Filterkennlinie-Logik implementieren
-        ], style={'backgroundColor': '#f8f9fa', 'padding': '20px', 'borderRadius': '8px'})
-    
+    if notebook_name:
+        notebook_path = Path(__file__).parent / notebook_name
+        if notebook_path.exists():
+            try:
+                webbrowser.open(f'file://{notebook_path.absolute()}')
+                return html.Div(
+                    f"✅ {notebook_name} wird geöffnet",
+                    style={'color': '#27ae60', 'fontWeight': 'bold', 'padding': '10px',
+                           'backgroundColor': '#d5f4e6', 'borderRadius': '5px', 'textAlign': 'center'}
+                )
+            except Exception as e:
+                Logger.error(f"Fehler beim Öffnen von {notebook_name}: {e}")
+                return html.Div(
+                    f"❌ Fehler beim Öffnen von {notebook_name}: {e}",
+                    style={'color': '#e74c3c', 'fontWeight': 'bold', 'padding': '10px', 
+                           'backgroundColor': '#fadbd8', 'borderRadius': '5px', 'textAlign': 'center'}
+                )
+        else:
+            return html.Div(
+                f"❌ Notebook {notebook_name} nicht gefunden",
+                style={'color': '#e74c3c', 'fontWeight': 'bold', 'padding': '10px',
+                             'backgroundColor': '#fadbd8', 'borderRadius': '5px', 'textAlign': 'center'}
+            )
     return ""
 
-# Cleanup
-atexit.register(process_manager.cleanup_all)
+# =============================================================================
+# INITIALIZATION
+# =============================================================================
+
+def initialize_system():
+    Logger.info("🎮 System wird initialisiert...")
+    for module_id, config in MODULES.items():
+        if config.type == 'dash_app':
+            process_manager.start_module(module_id)
+    dashboard_url = f"http://{process_manager.ip_address}:{CONFIG.port}"
+    Logger.info(f"🌐 Dashboard wird geöffnet: {dashboard_url}")
+    webbrowser.open(dashboard_url)
+
+# =============================================================================
+# MAIN
+# =============================================================================
 
 if __name__ == '__main__':
-    print("=" * 60)
-    print("🚀 OurDAQ Dashboard - Verbesserte Version")
-    print("=" * 60)
-    print(f"🔧 Debug Mode: {'AN' if DEBUG_MODE else 'AUS'}")
-    print(f"🎭 Simulation Mode: {'AN' if SIMULATION_MODE else 'AUS'}")
-    print(f"🌐 IP-Adresse: {process_manager.ip_address}")
-    print(f"🌐 Dashboard URL: http://{process_manager.ip_address}:{DASHBOARD_CONFIG['port']}")
-    print("=" * 60)
-    
+    atexit.register(process_manager.cleanup)
+    initialize_system()
     try:
+        Logger.info(f"🚀 Starte Dashboard auf http://{process_manager.ip_address}:{CONFIG.port}")
         app.run(
-            host=DASHBOARD_CONFIG['host'], 
-            port=DASHBOARD_CONFIG['port'], 
-            debug=DASHBOARD_CONFIG['debug']
+            host=CONFIG.host,
+            port=CONFIG.port,
+            debug=CONFIG.debug,
+            use_reloader=False
         )
-    except KeyboardInterrupt:
-        print("\n🛑 Dashboard wird beendet...")
-        process_manager.cleanup_all()
     except Exception as e:
-        print(f"❌ Fehler: {e}")
-        process_manager.cleanup_all()
+        Logger.error(f"Fehler beim Starten des Dashboards: {e}")
+        process_manager.cleanup()
