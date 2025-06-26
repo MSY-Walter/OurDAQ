@@ -2,6 +2,7 @@
 """
 Web-basierter Funktionsgenerator für AD9833 mit Dash
 Kompakte UI ohne Scrollen mit sichtbarer Signalvorschau
+Verwendet lgpio anstelle von RPi.GPIO
 """
 
 import socket
@@ -37,18 +38,19 @@ logger = logging.getLogger(__name__)
 ist_initialisiert = False
 aktuelle_wellenform = None
 aktuelle_frequenz = None
-spi = None
+gpio_handle = None
+spi_handle = None
 
 # Mock Hardware Imports
 if not SIMULATION_MODE:
     try:
-        import RPi.GPIO as GPIO
+        import lgpio
         import spidev
     except ImportError as e:
-        logger.warning(f"Fehler beim Importieren von RPi.GPIO oder spidev: {e}. Wechsle zu Simulation.")
+        logger.warning(f"Fehler beim Importieren von lgpio oder spidev: {e}. Wechsle zu Simulation.")
         SIMULATION_MODE = True
 
-# SPI Einstellungen
+# SPI und GPIO Einstellungen
 if not SIMULATION_MODE:
     SPI_BUS = 0
     SPI_DEVICE = 0
@@ -57,7 +59,7 @@ if not SIMULATION_MODE:
 
 def init_AD9833():
     """Initialisiert GPIO und SPI für AD9833 oder simuliert"""
-    global ist_initialisiert, spi
+    global ist_initialisiert, gpio_handle, spi_handle
     if ist_initialisiert:
         logger.info("AD9833 bereits initialisiert")
         return True, "AD9833 bereits initialisiert"
@@ -68,21 +70,26 @@ def init_AD9833():
         return True, "AD9833 simuliert initialisiert"
     
     try:
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(FSYNC_PIN, GPIO.OUT)
-        GPIO.output(FSYNC_PIN, GPIO.HIGH)
+        # lgpio Handle öffnen
+        gpio_handle = lgpio.gpiochip_open(0)
         
-        spi = spidev.SpiDev()
-        spi.open(SPI_BUS, SPI_DEVICE)
-        spi.max_speed_hz = SPI_FREQUENCY
-        spi.mode = 0b10
+        # FSYNC Pin als Ausgang konfigurieren
+        lgpio.gpio_claim_output(gpio_handle, FSYNC_PIN, lgpio.SET_PULL_NONE)
+        lgpio.gpio_write(gpio_handle, FSYNC_PIN, 1)  # HIGH setzen
         
+        # SPI initialisieren
+        spi_handle = spidev.SpiDev()
+        spi_handle.open(SPI_BUS, SPI_DEVICE)
+        spi_handle.max_speed_hz = SPI_FREQUENCY
+        spi_handle.mode = 0b10
+        
+        # Reset-Sequenz für AD9833
         write_to_AD9833(0x2100)
         time.sleep(0.1)
         
         ist_initialisiert = True
-        logger.info("AD9833 erfolgreich initialisiert")
-        return True, "AD9833 erfolgreich initialisiert"
+        logger.info("AD9833 erfolgreich initialisiert mit lgpio")
+        return True, "AD9833 erfolgreich initialisiert mit lgpio"
     except Exception as e:
         ist_initialisiert = False
         logger.error(f"Fehler beim Initialisieren: {str(e)}")
@@ -93,13 +100,15 @@ def write_to_AD9833(data):
     if SIMULATION_MODE:
         return True
     
-    if spi is None:
-        logger.error("SPI nicht initialisiert")
+    if spi_handle is None or gpio_handle is None:
+        logger.error("SPI oder GPIO nicht initialisiert")
         return False
     try:
-        GPIO.output(FSYNC_PIN, GPIO.LOW)
-        spi.xfer2([data >> 8, data & 0xFF], timeout=0.01)
-        GPIO.output(FSYNC_PIN, GPIO.HIGH)
+        # FSYNC LOW für Datenübertragung
+        lgpio.gpio_write(gpio_handle, FSYNC_PIN, 0)
+        spi_handle.xfer2([data >> 8, data & 0xFF], timeout=0.01)
+        # FSYNC HIGH nach Übertragung
+        lgpio.gpio_write(gpio_handle, FSYNC_PIN, 1)
         return True
     except Exception as e:
         logger.error(f"Fehler beim Schreiben: {str(e)}")
@@ -144,27 +153,37 @@ def set_waveform(waveform):
 
 def cleanup():
     """Räumt Ressourcen auf"""
-    global spi, ist_initialisiert
+    global spi_handle, gpio_handle, ist_initialisiert
     if SIMULATION_MODE:
         ist_initialisiert = False
         logger.info("Simulierter Cleanup abgeschlossen")
         return
     
     try:
-        if spi is not None:
+        # AD9833 reset vor Cleanup
+        if spi_handle is not None and gpio_handle is not None:
             write_to_AD9833(0x2100)
     except:
         pass
     finally:
         try:
-            GPIO.cleanup()
+            # GPIO Handle schließen
+            if gpio_handle is not None:
+                lgpio.gpiochip_close(gpio_handle)
+                gpio_handle = None
         except:
             pass
-        if spi is not None:
-            spi.close()
-            spi = None
+        
+        try:
+            # SPI Handle schließen
+            if spi_handle is not None:
+                spi_handle.close()
+                spi_handle = None
+        except:
+            pass
+        
         ist_initialisiert = False
-        logger.info("Cleanup abgeschlossen")
+        logger.info("Cleanup mit lgpio abgeschlossen")
 
 def get_ip_address():
     """Abrufen der IP-Adresse"""
@@ -235,12 +254,12 @@ def generate_waveform_svg(waveform_type, width=400, height=140):
 
 # Dash App
 app = Dash(__name__, external_stylesheets=['https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css'])
-app.title = "OurDAQ - Funktionsgenerator"
+app.title = "OurDAQ - Funktionsgenerator (lgpio)"
 
 # Layout
 app.layout = html.Div([
     # Header - kompakter
-    html.H1("🔬 OurDAQ Funktionsgenerator", 
+    html.H1("🔬 OurDAQ Funktionsgenerator (lgpio)", 
             className="text-2xl font-bold text-white bg-gradient-to-r from-blue-800 via-blue-600 to-blue-800 p-4 text-center rounded-lg shadow-lg mb-4"),
     
     # Hauptcontainer - zentriert und breiter
@@ -356,12 +375,13 @@ def handle_apply_configuration(n_clicks, wellenform, frequenz):
                     f"{base_style} border-red-400 text-red-600", 
                     wave_preview)
         
-        config_text = f"""✅ AKTIVE KONFIGURATION
+        config_text = f"""✅ AKTIVE KONFIGURATION (lgpio)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🌊 Wellenform: {wellenform_name}
 ⚡ Frequenz: {frequenz} Hz
 🚀 Status: Signalausgabe aktiv{' (Simuliert)' if SIMULATION_MODE else ''}
-📡 Hardware: {'Simulation' if SIMULATION_MODE else 'AD9833 bereit'}"""
+📡 Hardware: {'Simulation' if SIMULATION_MODE else 'AD9833 bereit'}
+🔧 GPIO: lgpio Library"""
         
         return (config_text, 
                 f"{base_style} border-green-400 text-green-600", 
@@ -378,5 +398,5 @@ import atexit
 atexit.register(cleanup)
 
 if __name__ == '__main__':
-    logger.info(f"Starte Funktionsgenerator im {'Simulation' if SIMULATION_MODE else 'Hardware'} Modus")
+    logger.info(f"Starte Funktionsgenerator im {'Simulation' if SIMULATION_MODE else 'Hardware'} Modus mit lgpio")
     app.run(host=get_ip_address(), port=8060, debug=True, use_reloader=False)
