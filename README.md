@@ -26,7 +26,6 @@ Das System bietet folgende Standard-Messroutinen:
 - Linux System wie [`Raspberry Pi OS`](https://www.raspberrypi.com/software/) oder [`Ubuntu`](https://ubuntu.com/download/raspberry-pi)
 - [`uv`](https://docs.astral.sh/uv/) Python-Paketemanager
 - `python>=3.11`
-- `PyQt5`
 - Und Folgende Python-Pakete:
   - `daqhats>=1.4.1.0`
   - `dash>=3.0.4`
@@ -54,7 +53,17 @@ Das System bietet folgende Standard-Messroutinen:
    sudo reboot
    ```
 
-3. repository klonen:
+3. Abhängigkeiten und Pakete von `Digilent MCC DAQ HAT MCC 118` installieren
+
+   ```bash
+   cd ~
+   git clone https://github.com/mccdaq/daqhats.git
+
+   cd ~/daqhats
+   sudo ./install.sh
+   ```
+
+4. repository klonen:
 
    ```bash
    cd ~
@@ -75,18 +84,21 @@ Das System bietet folgende Standard-Messroutinen:
 Hauptmenü in Web öffnen:
 
 ```bash
+cd ~/OurDAQ
 uv run src/Dashboard_web.py
 ```
 
 Bestimmte Funktionalität öffnen:
 
 ```bash
+cd ~/OurDAQ
 uv run src/<Dateiname>
 ```
 
 In Jupyter Notebook öffnen:
 
 ```bash
+cd ~/OurDAQ
 uv run jupyter notebook
 ```
 
