@@ -3,6 +3,7 @@
 Web-basierter Funktionsgenerator für AD9833 mit Dash
 Kompakte UI ohne Scrollen mit sichtbarer Signalvorschau
 Verwendet lgpio anstelle von RPi.GPIO
+KORRIGIERT: Wellenform-Änderung funktioniert jetzt mehrfach
 """
 
 import socket
@@ -20,7 +21,7 @@ CONTROL_REG = 0x2000
 # Wellenform-Konstanten - korrigierte Werte für AD9833
 SINE_WAVE = 0x2000      # Sinus: D5=0, D1=0, D3=0
 TRIANGLE_WAVE = 0x2002  # Dreieck: D5=0, D1=1, D3=0  
-SQUARE_WAVE = 0x2020    # Rechteck: D5=1, D1=0, D3=0 (korrigiert!)
+SQUARE_WAVE = 0x2020    # Rechteck: D5=1, D1=0, D3=0
 
 # Frequenz-Konstanten
 FMCLK = 25000000
@@ -150,75 +151,91 @@ def write_to_AD9833(data):
         logger.error(f"Fehler beim Schreiben: {str(e)}")
         return False
 
-def set_frequency(freq):
-    """Stellt die Ausgangsfrequenz ein (in Hz)"""
-    global aktuelle_frequenz
-    if SIMULATION_MODE:
-        aktuelle_frequenz = freq
-        logger.info(f"Frequenz simuliert gesetzt: {freq} Hz")
-        return True
+def configure_AD9833(freq, waveform):
+    """
+    KORRIGIERTE FUNKTION: Komplette Konfiguration von Frequenz und Wellenform
+    Diese Funktion löst das Problem mit wiederholten Wellenform-Änderungen
+    """
+    global aktuelle_frequenz, aktuelle_wellenform
     
-    try:
-        # Frequenz-Word berechnen
-        freq_word = int((freq * 2**28) / FMCLK)
-        logger.info(f"Setze Frequenz {freq} Hz, Freq-Word: 0x{freq_word:08X}")
-        
-        # Frequenz setzen OHNE die Wellenform zu überschreiben
-        # B28-Bit setzen, aber aktuelle Wellenform beibehalten
-        current_control = aktuelle_wellenform if aktuelle_wellenform else SINE_WAVE
-        control_with_b28 = current_control | 0x0100  # B28-Bit setzen
-        
-        if not write_to_AD9833(control_with_b28):
-            return False
-        
-        # Niederwertiges 14-Bit Wort senden
-        freq_lsb = FREQ0_REG | (freq_word & 0x3FFF)
-        if not write_to_AD9833(freq_lsb):
-            return False
-        logger.debug(f"Frequenz LSB gesendet: 0x{freq_lsb:04X}")
-        
-        # Höherwertiges 14-Bit Wort senden
-        freq_msb = FREQ0_REG | ((freq_word >> 14) & 0x3FFF)
-        if not write_to_AD9833(freq_msb):
-            return False
-        logger.debug(f"Frequenz MSB gesendet: 0x{freq_msb:04X}")
-        
-        # B28-Bit wieder deaktivieren, Wellenform beibehalten
-        if not write_to_AD9833(current_control):
-            return False
-        
-        aktuelle_frequenz = freq
-        logger.info(f"Frequenz erfolgreich gesetzt: {freq} Hz (Wellenform beibehalten)")
-        return True
-    except Exception as e:
-        logger.error(f"Fehler beim Setzen der Frequenz: {str(e)}")
-        return False
-
-def set_waveform(waveform):
-    """Stellt die Wellenform ein"""
-    global aktuelle_wellenform
     if SIMULATION_MODE:
+        aktuelle_frequenz = freq
         aktuelle_wellenform = waveform
-        logger.info(f"Wellenform simuliert gesetzt: 0x{waveform:04X}")
+        logger.info(f"Simuliert konfiguriert: {freq} Hz, Wellenform: 0x{waveform:04X}")
         return True
     
     try:
         wellenform_namen = {SINE_WAVE: "Sinus", TRIANGLE_WAVE: "Dreieck", SQUARE_WAVE: "Rechteck"}
         waveform_name = wellenform_namen.get(waveform, f"Unbekannt (0x{waveform:04X})")
-        logger.info(f"Setze Wellenform: {waveform_name} (0x{waveform:04X})")
+        logger.info(f"Konfiguriere AD9833: {freq} Hz, {waveform_name}")
         
-        if not write_to_AD9833(waveform):
+        # SCHRITT 1: Reset und B28-Bit setzen für Frequenz-Update
+        # Wichtig: Wellenform-Bits MÜSSEN von Anfang an gesetzt werden!
+        control_word = waveform | 0x2100  # Wellenform + Reset + B28
+        if not write_to_AD9833(control_word):
             return False
+        time.sleep(0.005)
         
-        # Kurze Pause nach Wellenform-Änderung
-        time.sleep(0.01)
+        # SCHRITT 2: Reset deaktivieren, aber B28 und Wellenform beibehalten
+        control_word = waveform | 0x2000  # Wellenform ohne Reset, aber noch ohne B28
+        if not write_to_AD9833(control_word):
+            return False
+        time.sleep(0.005)
         
+        # SCHRITT 3: B28-Bit setzen für 28-Bit Frequenz-Update
+        control_word = waveform | 0x2000 | 0x0100  # Wellenform + B28-Bit
+        if not write_to_AD9833(control_word):
+            return False
+        time.sleep(0.002)
+        
+        # SCHRITT 4: Frequenz berechnen und setzen
+        freq_word = int((freq * 2**28) / FMCLK)
+        logger.debug(f"Freq-Word berechnet: 0x{freq_word:08X}")
+        
+        # SCHRITT 5: Niederwertiges 14-Bit Wort senden
+        freq_lsb = FREQ0_REG | (freq_word & 0x3FFF)
+        if not write_to_AD9833(freq_lsb):
+            return False
+        time.sleep(0.002)
+        
+        # SCHRITT 6: Höherwertiges 14-Bit Wort senden
+        freq_msb = FREQ0_REG | ((freq_word >> 14) & 0x3FFF)
+        if not write_to_AD9833(freq_msb):
+            return False
+        time.sleep(0.002)
+        
+        # SCHRITT 7: ENTSCHEIDEND! Finale Konfiguration mit korrekter Wellenform
+        # B28-Bit deaktivieren und finale Wellenform setzen
+        final_control = waveform | 0x2000  # Nur Wellenform-Bits, kein B28
+        if not write_to_AD9833(final_control):
+            return False
+        time.sleep(0.005)
+        
+        # SCHRITT 8: Zusätzliche Stabilisierung - nochmals senden
+        if not write_to_AD9833(final_control):
+            return False
+        time.sleep(0.005)
+        
+        # Globale Variablen aktualisieren
+        aktuelle_frequenz = freq
         aktuelle_wellenform = waveform
-        logger.info(f"Wellenform erfolgreich gesetzt: {waveform_name}")
+        
+        logger.info(f"AD9833 erfolgreich konfiguriert: {freq} Hz, {waveform_name} (0x{waveform:04X})")
         return True
+        
     except Exception as e:
-        logger.error(f"Fehler beim Setzen der Wellenform: {str(e)}")
+        logger.error(f"Fehler bei der AD9833 Konfiguration: {str(e)}")
         return False
+
+def set_frequency(freq):
+    """Wrapper für Frequenz-Änderung (benutzt configure_AD9833)"""
+    current_waveform = aktuelle_wellenform if aktuelle_wellenform else SINE_WAVE
+    return configure_AD9833(freq, current_waveform)
+
+def set_waveform(waveform):
+    """Wrapper für Wellenform-Änderung (benutzt configure_AD9833)"""
+    current_freq = aktuelle_frequenz if aktuelle_frequenz else 1000
+    return configure_AD9833(current_freq, waveform)
 
 def cleanup():
     """Räumt Ressourcen auf"""
@@ -323,12 +340,12 @@ def generate_waveform_svg(waveform_type, width=400, height=140):
 
 # Dash App
 app = Dash(__name__, external_stylesheets=['https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css'])
-app.title = "OurDAQ - Funktionsgenerator (lgpio)"
+app.title = "OurDAQ - Funktionsgenerator (lgpio) - KORRIGIERT"
 
 # Layout
 app.layout = html.Div([
     # Header - kompakter
-    html.H1("🔬 OurDAQ Funktionsgenerator (lgpio)", 
+    html.H1("🔬 OurDAQ Funktionsgenerator (lgpio) - KORRIGIERT", 
             className="text-2xl font-bold text-white bg-gradient-to-r from-blue-800 via-blue-600 to-blue-800 p-4 text-center rounded-lg shadow-lg mb-4"),
     
     # Hauptcontainer - zentriert und breiter
@@ -434,24 +451,20 @@ def handle_apply_configuration(n_clicks, wellenform, frequenz):
     wellenform_name = wellenform_namen.get(wellenform, "Unbekannt")
     
     try:
-        # WICHTIG: Zuerst Wellenform, dann Frequenz setzen!
-        if not set_waveform(wellenform):
-            return ('❌ Fehler beim Setzen der Wellenform', 
+        # KORRIGIERT: Verwende die neue configure_AD9833 Funktion
+        if not configure_AD9833(frequenz, wellenform):
+            return ('❌ Fehler bei der Konfiguration', 
                     f"{base_style} border-red-400 text-red-600", 
                     wave_preview)
         
-        if not set_frequency(frequenz):
-            return ('❌ Fehler beim Setzen der Frequenz', 
-                    f"{base_style} border-red-400 text-red-600", 
-                    wave_preview)
-        
-        config_text = f"""✅ AKTIVE KONFIGURATION (lgpio)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        config_text = f"""✅ AKTIVE KONFIGURATION (lgpio) - KORRIGIERT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🌊 Wellenform: {wellenform_name}
 ⚡ Frequenz: {frequenz} Hz
 🚀 Status: Signalausgabe aktiv{' (Simuliert)' if SIMULATION_MODE else ''}
-📡 Hardware: {'Simulation' if SIMULATION_MODE else 'AD9833 bereit'}
-🔧 GPIO: lgpio Library"""
+📡 Hardware: {'Simulation' if SIMULATION_MODE else 'AD9833 konfiguriert'}
+🔧 GPIO: lgpio Library
+🆕 Fix: Wellenform-Änderung funktioniert mehrfach"""
         
         return (config_text, 
                 f"{base_style} border-green-400 text-green-600", 
@@ -468,5 +481,5 @@ import atexit
 atexit.register(cleanup)
 
 if __name__ == '__main__':
-    logger.info(f"Starte Funktionsgenerator im {'Simulation' if SIMULATION_MODE else 'Hardware'} Modus mit lgpio")
+    logger.info(f"Starte KORRIGIERTEN Funktionsgenerator im {'Simulation' if SIMULATION_MODE else 'Hardware'} Modus mit lgpio")
     app.run(host=get_ip_address(), port=8060, debug=True, use_reloader=False)
