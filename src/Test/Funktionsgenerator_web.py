@@ -30,8 +30,8 @@ MIN_FREQUENCY = 0.1
 # Simulation Mode
 SIMULATION_MODE = '--simulate' in sys.argv
 
-# Logging konfigurieren
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Logging konfigurieren - detaillierter für Debugging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Globale Variablen
@@ -70,22 +70,50 @@ def init_AD9833():
         return True, "AD9833 simuliert initialisiert"
     
     try:
+        # Cleanup falls vorherige Handles noch offen
+        if gpio_handle is not None:
+            try:
+                lgpio.gpiochip_close(gpio_handle)
+            except:
+                pass
+        if spi_handle is not None:
+            try:
+                spi_handle.close()
+            except:
+                pass
+        
         # lgpio Handle öffnen
         gpio_handle = lgpio.gpiochip_open(0)
+        logger.info(f"GPIO Handle geöffnet: {gpio_handle}")
         
         # FSYNC Pin als Ausgang konfigurieren
         lgpio.gpio_claim_output(gpio_handle, FSYNC_PIN, lgpio.SET_PULL_NONE)
         lgpio.gpio_write(gpio_handle, FSYNC_PIN, 1)  # HIGH setzen
+        logger.info(f"FSYNC Pin {FSYNC_PIN} konfiguriert und auf HIGH gesetzt")
         
         # SPI initialisieren
         spi_handle = spidev.SpiDev()
         spi_handle.open(SPI_BUS, SPI_DEVICE)
         spi_handle.max_speed_hz = SPI_FREQUENCY
-        spi_handle.mode = 0b10
+        spi_handle.mode = 0b10  # CPOL=1, CPHA=0
+        logger.info(f"SPI konfiguriert: Bus={SPI_BUS}, Device={SPI_DEVICE}, Speed={SPI_FREQUENCY}Hz, Mode={spi_handle.mode}")
         
-        # Reset-Sequenz für AD9833
-        write_to_AD9833(0x2100)
-        time.sleep(0.1)
+        # Erweiterte Reset-Sequenz für AD9833
+        logger.info("Starte AD9833 Reset-Sequenz...")
+        
+        # Master Reset
+        write_to_AD9833(0x2100)  # Reset aktivieren
+        time.sleep(0.01)
+        
+        # Reset deaktivieren und Chip für Konfiguration vorbereiten
+        write_to_AD9833(0x2000)  # Reset deaktivieren
+        time.sleep(0.01)
+        
+        # Standardkonfiguration setzen
+        write_to_AD9833(0x2000)  # Sinuswelle, normale Operation
+        time.sleep(0.01)
+        
+        logger.info("AD9833 Reset-Sequenz abgeschlossen")
         
         ist_initialisiert = True
         logger.info("AD9833 erfolgreich initialisiert mit lgpio")
@@ -98,6 +126,7 @@ def init_AD9833():
 def write_to_AD9833(data):
     """Sendet 16-Bit Daten an AD9833 oder simuliert"""
     if SIMULATION_MODE:
+        logger.debug(f"Simuliert: Sende 0x{data:04X} an AD9833")
         return True
     
     if spi_handle is None or gpio_handle is None:
@@ -106,9 +135,16 @@ def write_to_AD9833(data):
     try:
         # FSYNC LOW für Datenübertragung
         lgpio.gpio_write(gpio_handle, FSYNC_PIN, 0)
-        spi_handle.xfer2([data >> 8, data & 0xFF], timeout=0.01)
+        time.sleep(0.001)  # Kurze Pause für saubere Flanke
+        
+        # Daten als 16-Bit übertragen (MSB first)
+        result = spi_handle.xfer2([data >> 8, data & 0xFF])
+        
+        time.sleep(0.001)  # Kurze Pause vor FSYNC HIGH
         # FSYNC HIGH nach Übertragung
         lgpio.gpio_write(gpio_handle, FSYNC_PIN, 1)
+        
+        logger.debug(f"Erfolgreich gesendet: 0x{data:04X}, Antwort: {result}")
         return True
     except Exception as e:
         logger.error(f"Fehler beim Schreiben: {str(e)}")
@@ -123,12 +159,32 @@ def set_frequency(freq):
         return True
     
     try:
+        # Frequenz-Word berechnen
         freq_word = int((freq * 2**28) / FMCLK)
-        write_to_AD9833(0x2100)
-        write_to_AD9833(FREQ0_REG | (freq_word & 0x3FFF))
-        write_to_AD9833(FREQ0_REG | ((freq_word >> 14) & 0x3FFF))
+        logger.info(f"Setze Frequenz {freq} Hz, Freq-Word: 0x{freq_word:08X}")
+        
+        # B28-Bit setzen für 28-Bit Frequenz-Update
+        if not write_to_AD9833(0x2100):  # Reset mit B28=1
+            return False
+        
+        # Niederwertiges 14-Bit Wort senden
+        freq_lsb = FREQ0_REG | (freq_word & 0x3FFF)
+        if not write_to_AD9833(freq_lsb):
+            return False
+        logger.debug(f"Frequenz LSB gesendet: 0x{freq_lsb:04X}")
+        
+        # Höherwertiges 14-Bit Wort senden
+        freq_msb = FREQ0_REG | ((freq_word >> 14) & 0x3FFF)
+        if not write_to_AD9833(freq_msb):
+            return False
+        logger.debug(f"Frequenz MSB gesendet: 0x{freq_msb:04X}")
+        
+        # Reset deaktivieren
+        if not write_to_AD9833(0x2000):
+            return False
+        
         aktuelle_frequenz = freq
-        logger.info(f"Frequenz gesetzt: {freq} Hz")
+        logger.info(f"Frequenz erfolgreich gesetzt: {freq} Hz")
         return True
     except Exception as e:
         logger.error(f"Fehler beim Setzen der Frequenz: {str(e)}")
@@ -139,13 +195,22 @@ def set_waveform(waveform):
     global aktuelle_wellenform
     if SIMULATION_MODE:
         aktuelle_wellenform = waveform
-        logger.info(f"Wellenform simuliert gesetzt: {waveform}")
+        logger.info(f"Wellenform simuliert gesetzt: 0x{waveform:04X}")
         return True
     
     try:
-        write_to_AD9833(waveform)
+        wellenform_namen = {SINE_WAVE: "Sinus", TRIANGLE_WAVE: "Dreieck", SQUARE_WAVE: "Rechteck"}
+        waveform_name = wellenform_namen.get(waveform, f"Unbekannt (0x{waveform:04X})")
+        logger.info(f"Setze Wellenform: {waveform_name} (0x{waveform:04X})")
+        
+        if not write_to_AD9833(waveform):
+            return False
+        
+        # Kurze Pause nach Wellenform-Änderung
+        time.sleep(0.01)
+        
         aktuelle_wellenform = waveform
-        logger.info(f"Wellenform gesetzt: {waveform}")
+        logger.info(f"Wellenform erfolgreich gesetzt: {waveform_name}")
         return True
     except Exception as e:
         logger.error(f"Fehler beim Setzen der Wellenform: {str(e)}")
