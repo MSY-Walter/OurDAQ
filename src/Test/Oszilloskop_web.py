@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 """
 Web-basiertes Oszilloskop für MCC 118 mit Dash

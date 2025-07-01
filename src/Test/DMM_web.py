@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 """
 Web-basierter Digitaler Multimeter für MCC 118 mit Dash

@@ -1,4 +1,4 @@
-# Alternative Implementierung mit Raspberry Pi und externem ADC
+# -*- coding: utf-8 -*-
 import lgpio
 import spidev
 import numpy as np
