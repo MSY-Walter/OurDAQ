@@ -70,8 +70,8 @@ for freq in frequencies:
     hat.a_in_scan_cleanup()
 
     data = result.data
-    in_sig = data[1::2]   # Kanal 6 = Eingang FG
-    out_sig = data[0::2] # Kanal 7 = Filterausgang
+    in_sig = data[::2]   # Kanal 6 = Eingang FG
+    out_sig = data[1::2] # Kanal 7 = Filterausgang
 
     phase_in, amp_in = get_phase(in_sig, sample_rate, freq)
     phase_out, amp_out = get_phase(out_sig, sample_rate, freq)
