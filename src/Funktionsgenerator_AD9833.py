@@ -1,102 +1,91 @@
 # -*- coding: utf-8 -*-
-"""
-Funktionsgenerator für AD9833 DDS (Direct Digital Synthesis)
-Optimiert für MCC 118 DAQ HAT auf Raspberry Pi
-"""
-
-import sys
+import lgpio
+import spidev
 import time
 
-# Simulation Mode aktivieren wenn --simulate übergeben wird
-SIMULATION_MODE = '--simulate' in sys.argv
+# AD9833 Register-Konstanten (basierend auf funktionierenden Projektdateien)
+FREQ0_REG = 0x4000
+PHASE0_REG = 0xC000
+CONTROL_REG = 0x2000
 
-# Hardware Imports - nur wenn nicht im Simulation Mode
-if not SIMULATION_MODE:
-    try:
-        import lgpio
-        import spidev
-    except ImportError as e:
-        print(f"Fehler beim Importieren von lgpio oder spidev: {e}")
-        print("Wechsle zu Simulation Mode")
-        SIMULATION_MODE = True
+# Wellenform-Konstanten
+SINE_WAVE = 0x2000      # Sinuswelle
+TRIANGLE_WAVE = 0x2002  # Dreieckswelle
+SQUARE_WAVE = 0x2028    # Rechteckwelle
 
-# AD9833 Konstanten
-FREQ0_REG = 0x4000      # Frequenz Register 0
-PHASE0_REG = 0xC000     # Phase Register 0
-CONTROL_REG = 0x2000    # Kontroll Register
-RESET = 0x2100          # Reset Kommando
+# Reset-Konstante (kritisch für korrekte Funktion!)
+RESET = 0x2100          # Reset-Befehl wie in Filterkennlinie.ipynb
 
-# Wellenform Konstanten für AD9833
-SINE_WAVE = 0x2000      # Sinus: D5=0, D1=0, D3=0
-TRIANGLE_WAVE = 0x2002  # Dreieck: D5=0, D1=1, D3=0  
-SQUARE_WAVE = 0x2020    # Rechteck: D5=1, D1=0, D3=0
+# SPI Einstellungen
+SPI_BUS = 0
+SPI_DEVICE = 0
+SPI_FREQUENCY = 1000000  # 1 MHz
 
-# Frequenz Konstanten
-FMCLK = 25000000        # Master Clock Frequenz (25 MHz)
-MAX_FREQUENCY = 20000   # Maximale Ausgangsfrequenz (20 kHz)
-MIN_FREQUENCY = 0.1     # Minimale Ausgangsfrequenz (0.1 Hz)
+# FSYNC Pin (Chip Select)
+FSYNC_PIN = 25  # GPIO-Pin für FSYNC
 
-# Hardware Konfiguration
-SPI_BUS = 0             # SPI Bus Nummer
-SPI_DEVICE = 0          # SPI Device Nummer  
-SPI_MAX_SPEED = 2000000 # SPI Geschwindigkeit (2 MHz)
-FSYNC_PIN = 22          # GPIO Pin für FSYNC Signal
+# Frequenz-Konstanten
+FMCLK = 25000000  # 25 MHz Standardtaktfrequenz
+MAX_FREQUENCY = 20000  # Maximale Ausgangsfrequenz: 20 kHz
+MIN_FREQUENCY = 0.1    # Minimale Ausgangsfrequenz: 0.1 Hz
 
-# Globale Variablen für Hardware-Handles
+# Globale Variablen
 gpio_handle = None
 spi = None
 
 def init_AD9833():
-    """
-    Initialisiert die Hardware-Verbindung zum AD9833
-    Konfiguriert GPIO für FSYNC und öffnet SPI-Verbindung
-    """
+    """Initialisiert GPIO und SPI für AD9833"""
     global gpio_handle, spi
     
-    if SIMULATION_MODE:
-        print("SIMULATION: Hardware-Initialisierung")
-        gpio_handle = "simulation"
-        spi = "simulation"
-        return True
-    
     try:
-        # GPIO Chip öffnen
-        gpio_handle = lgpio.gpiochip_open(0)
-        if gpio_handle < 0:
-            print("Fehler: GPIO Chip konnte nicht geöffnet werden")
-            return False
-        
-        # FSYNC Pin als Ausgang konfigurieren
-        lgpio.gpio_claim_output(gpio_handle, FSYNC_PIN, lgpio.SET)
-        print("GPIO erfolgreich initialisiert")
-        
-        # SPI öffnen
+        print("Öffne GPIO-Chip 4...")
+        # lgpio initialisieren - öffnet GPIO-Chip
+        gpio_handle = lgpio.gpiochip_open(4)  # gpiochip4 für Raspberry Pi 5
+        print("GPIO-Chip 4 geöffnet")
+
+        print(f"Konfiguriere GPIO Pin {FSYNC_PIN} als Ausgang...")
+        # FSYNC Pin als Ausgang konfigurieren (initial HIGH)
+        lgpio.gpio_claim_output(gpio_handle, FSYNC_PIN, lgpio.SET)  
+        print(f"GPIO Pin {FSYNC_PIN} konfiguriert")
+
+        print("Initialisiere SPI...")
+        # SPI initialisieren
         spi = spidev.SpiDev()
         spi.open(SPI_BUS, SPI_DEVICE)
-        spi.max_speed_hz = SPI_MAX_SPEED
-        spi.mode = 2  # SPI Mode 2 (CPOL=1, CPHA=0)
-        print("SPI erfolgreich initialisiert")
-        
+        spi.max_speed_hz = SPI_FREQUENCY
+        spi.mode = 0b10  # SPI Modus 2 (CPOL=1, CPHA=0)
+        print(f"SPI Bus {SPI_BUS}.{SPI_DEVICE} geöffnet (Geschwindigkeit: {SPI_FREQUENCY} Hz)")
+
+        print("Führe initiales Reset durch...")
+        # Initiales Reset des AD9833
+        reset_success = write_to_AD9833(RESET)
+        if not reset_success:
+            print("Initiales Reset fehlgeschlagen")
+            return False
+            
+        time.sleep(0.1)  # Warten bis Reset abgeschlossen
+        print("Initiales Reset abgeschlossen")
+
+        print("AD9833 erfolgreich initialisiert")
         return True
         
     except Exception as e:
-        print(f"Fehler bei der Hardware-Initialisierung: {e}")
+        print(f"Fehler bei der Initialisierung: {e}")
+        print(f"Details: {type(e).__name__}")
+        cleanup_AD9833()
         return False
 
 def write_to_AD9833(data):
     """
-    Sendet 16-Bit Daten an den AD9833 über SPI
-    Implementiert das korrekte Timing-Protokoll:
+    Sendet 16-Bit Daten an AD9833
+    
+    Kritische Timing-Sequenz:
     1. FSYNC auf LOW (Übertragung startet)
     2. 16-Bit Daten senden (High-Byte zuerst)
     3. FSYNC auf HIGH (Übertragung beendet)
     """
-    if SIMULATION_MODE:
-        print(f"SIMULATION: Schreibe 0x{data:04X} an AD9833")
-        return True
-    
     if gpio_handle is None or spi is None:
-        print("Fehler: GPIO oder SPI nicht initialisiert")
+        print("GPIO oder SPI nicht initialisiert")
         return False
     
     try:
@@ -130,7 +119,7 @@ def set_ad9833_frequency(freq_hz):
     Diese exakte Reihenfolge ist ESSENTIELL für korrekte Funktion!
     """
     if not (MIN_FREQUENCY <= freq_hz <= MAX_FREQUENCY):
-        print(f"Fehler: Frequenz {freq_hz} Hz außerhalb des gültigen Bereichs ({MIN_FREQUENCY}-{MAX_FREQUENCY} Hz)")
+        print(f"Frequenz {freq_hz} Hz außerhalb des gültigen Bereichs ({MIN_FREQUENCY}-{MAX_FREQUENCY} Hz)")
         return False
     
     try:
@@ -191,35 +180,31 @@ def configure_AD9833(freq_hz, waveform):
     funktionierenden Filterkennlinie.ipynb
     """
     print(f"Starte AD9833 Konfiguration...")
-    print(f"   Zielfrequenz: {freq_hz} Hz")
+    print(f"Zielfrequenz: {freq_hz} Hz")
     
     try:
         # Schritt 1: Frequenz einstellen (beinhaltet Reset und Frequenz-Setup)
-        print("   Setze Frequenz...")
+        print("Setze Frequenz...")
         if not set_ad9833_frequency(freq_hz):
-            print("   Frequenz-Einstellung fehlgeschlagen")
+            print("Frequenz-Einstellung fehlgeschlagen")
             return False
         
         # Schritt 2: Wellenform aktivieren (beendet Reset, startet Ausgabe)
-        print("   Aktiviere Wellenform...")
+        print("Aktiviere Wellenform...")
         if not activate_waveform(waveform):
-            print("   Wellenform-Aktivierung fehlgeschlagen")
+            print("Wellenform-Aktivierung fehlgeschlagen")
             return False
         
-        print(f"   AD9833 Konfiguration abgeschlossen")
+        print(f"AD9833 Konfiguration abgeschlossen")
         return True
         
     except Exception as e:
-        print(f"   Fehler bei der Konfiguration: {e}")
+        print(f"Fehler bei der Konfiguration: {e}")
         return False
 
 def cleanup_AD9833():
     """Räumt GPIO und SPI Ressourcen auf"""
     global gpio_handle, spi
-    
-    if SIMULATION_MODE:
-        print("SIMULATION: Ressourcen-Cleanup")
-        return
     
     try:
         # AD9833 zurücksetzen vor dem Beenden
@@ -242,7 +227,7 @@ def cleanup_AD9833():
             print("SPI Schnittstelle geschlossen")
             
     except Exception as e:
-        print(f"Warnung: Fehler beim Cleanup: {e}")
+        print(f"Fehler beim Cleanup: {e}")
 
 def get_waveform_choice():
     """Erfasst Wellenform-Auswahl vom Benutzer"""
@@ -276,7 +261,7 @@ def get_frequency():
                 return freq
             else:
                 print(f"Die Frequenz muss zwischen {MIN_FREQUENCY} und {MAX_FREQUENCY} Hz liegen.")
-                
+                continue
         except ValueError:
             print("Bitte geben Sie eine gültige Zahl ein.")
         except KeyboardInterrupt:
@@ -286,7 +271,7 @@ def get_frequency():
 def main():
     """Hauptfunktion des Funktionsgenerators - einmalige Konfiguration"""
     print("=" * 60)
-    print("    AD9833 FUNKTIONSGENERATOR")
+    print("AD9833 FUNKTIONSGENERATOR")
     print("=" * 60)
     
     try:
@@ -314,16 +299,16 @@ def main():
         
         # Konfiguration durchführen
         print(f"\nSchritt 3: AD9833 konfigurieren")
-        print(f"   Frequenz: {freq} Hz")
-        print(f"   Wellenform: {waveform_name}")
-        
+        print(f"Frequenz: {freq} Hz")
+        print(f"Wellenform: {waveform_name}")
+
         config_success = configure_AD9833(freq, waveform_code)
         
         if config_success:
             print(f"\nFUNKTIONSGENERATOR ERFOLGREICH KONFIGURIERT:")
-            print(f"   Frequenz: {freq} Hz")
-            print(f"   Wellenform: {waveform_name}")
-            print(f"   Signal wird ausgegeben!")
+            print(f"Frequenz: {freq} Hz")
+            print(f"Wellenform: {waveform_name}")
+            print(f"Signal wird ausgegeben!")
             print(f"\nFür neue Einstellungen starten Sie das Programm erneut.")
         else:
             print("Konfiguration fehlgeschlagen")
