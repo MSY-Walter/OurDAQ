@@ -1,7 +1,6 @@
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 """
-Web-basierter Funktionsgenerator für AD9833 mit Dash
-KORRIGIERTE VERSION - Löst das Problem der einmaligen Konfiguration
+Web-basierter Funktionsgenerator mit AD9833
 """
 
 import socket

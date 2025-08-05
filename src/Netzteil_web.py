@@ -1,7 +1,6 @@
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 """
-Netzteil Web Interface für OurDAQ Dashboard
-Integriert Spannungseinstellung mit Strommessung
+Netzteil Web Interface
 """
 
 import argparse

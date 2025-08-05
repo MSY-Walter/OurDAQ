@@ -1,4 +1,8 @@
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
+"""
+Filterkennlinie Messung
+"""
+
 import lgpio
 import spidev
 import numpy as np

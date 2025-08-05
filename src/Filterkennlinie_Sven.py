@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+"""
+Filterkennlinie Messung Sven
+"""
+
 from daqhats import mcc118, OptionFlags
 from ctypes import c_uint32
 import numpy as np

@@ -1,7 +1,6 @@
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 """
-Web-basiertes Dashboard für das OurDAQ-System
-Zentrale Übersicht mit Links zu allen verfügbaren Modulen
+Web-basiertes Dashboard für das OurDAQ Datenerfassungssystem
 """
 
 import socket

@@ -1,6 +1,6 @@
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 """
-Web-basiertes Oszilloskop für MCC 118 mit Dash
+Web-basiertes Oszilloskop
 """
 
 import socket

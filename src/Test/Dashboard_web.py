@@ -1,6 +1,6 @@
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 """
-Optimiertes OurDAQ Dashboard - Moderne, saubere Version mit Systemübersicht
+Optimiertes OurDAQ Dashboard
 """
 
 import sys

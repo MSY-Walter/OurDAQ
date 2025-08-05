@@ -1,4 +1,8 @@
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
+"""
+Funktionsgenerator mit AD9833
+"""
+
 import lgpio
 import spidev
 import time

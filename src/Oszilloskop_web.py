@@ -1,4 +1,8 @@
-#  -*- coding: utf-8 -*-
+#!/usr/bin/env python3
+"""
+Oszilloskop-Webanwendung
+"""
+
 import socket
 import json
 from time import sleep

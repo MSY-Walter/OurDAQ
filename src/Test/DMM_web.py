@@ -1,9 +1,6 @@
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 """
-Web-basierter Digitaler Multimeter für MCC 118 mit Dash
-Ein LabVIEW-ähnlicher DMM als Webanwendung mit Dash/Plotly
-Mit Echtzeitdiagramm und CSV-Download
-Performance-optimiert für Raspberry Pi 5
+Web-basierter Digitaler Multimeter
 """
 
 import os

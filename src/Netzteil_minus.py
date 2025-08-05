@@ -1,4 +1,8 @@
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
+"""
+Netzteil Minus Seite: Strombegrenzung und DAC Steuerung
+"""
+
 from __future__ import print_function
 import spidev
 import time
