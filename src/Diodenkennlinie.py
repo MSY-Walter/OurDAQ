@@ -26,7 +26,7 @@ class DiodenmessungMitLgpio:
         
         # GPIO Setup mit lgpio
         self.gpio_chip = lgpio.gpiochip_open(0)
-        self.cs_dac_pin = 22    # CS für DAC
+        self.cs_dac_pin = 23    # CS für DAC
         self.cs_adc_pin = 8     # CS für ADC (falls nicht über SPI Device gesteuert)
         
         # GPIO Pins als Ausgänge konfigurieren
