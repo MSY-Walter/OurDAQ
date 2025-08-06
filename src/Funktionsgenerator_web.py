@@ -1,16 +1,29 @@
 #!/usr/bin/env python3
 """
-Funktionsgenerator Web Interface
+Web-basierter Funktionsgenerator mit AD9833
+Dieses Modul stellt eine webbasierte Benutzeroberfläche für den AD9833 Funktionsgenerator bereit.
 """
 
-import dash
-from dash import dcc, html, Input, Output, callback_context
-import plotly.graph_objects as go
-import lgpio
-import spidev
-import time
-import threading
 import socket
+import sys
+from typing import Optional, Dict, Any
+import time
+
+# Dash-Importierungen
+from dash import Dash, dcc, html, Input, Output, State, callback
+import plotly.graph_objects as go
+
+# Simulation Mode überprüfen
+SIMULATION_MODE = '--simulate' in sys.argv
+
+# Mock Hardware Imports für Simulation
+if not SIMULATION_MODE:
+    try:
+        import lgpio
+        import spidev
+    except ImportError as e:
+        print(f"Hardware-Bibliotheken nicht verfügbar: {e}. Wechsle zu Simulation.")
+        SIMULATION_MODE = True
 
 # AD9833 Register-Konstanten
 FREQ0_REG = 0x4000
@@ -21,8 +34,6 @@ CONTROL_REG = 0x2000
 SINE_WAVE = 0x2000      # Sinuswelle
 TRIANGLE_WAVE = 0x2002  # Dreieckswelle
 SQUARE_WAVE = 0x2028    # Rechteckwelle
-
-# Reset-Konstante
 RESET = 0x2100          # Reset-Befehl
 
 # SPI Einstellungen
@@ -38,137 +49,18 @@ FMCLK = 25000000  # 25 MHz Standardtaktfrequenz
 MAX_FREQUENCY = 20000  # Maximale Ausgangsfrequenz: 20 kHz
 MIN_FREQUENCY = 0.1    # Minimale Ausgangsfrequenz: 0.1 Hz
 
-# Globale Variablen für Hardware-Zugriff
+# Globale Variablen für Hardware
 gpio_handle = None
 spi = None
-current_freq = 1000.0  # Aktuelle Frequenz
-current_waveform = SINE_WAVE  # Aktuelle Wellenform
-hardware_initialized = False
+current_status = "Nicht initialisiert"
 
-class AD9833Controller:
-    """Klasse zur Steuerung des AD9833"""
-    
-    def __init__(self):
-        self.gpio_handle = None
-        self.spi = None
-        self.initialized = False
-        
-    def init_hardware(self):
-        """Hardware initialisieren"""
-        try:
-            # GPIO-Chip öffnen
-            self.gpio_handle = lgpio.gpiochip_open(4)  # gpiochip4 für Raspberry Pi 5
-            
-            # FSYNC Pin als Ausgang konfigurieren
-            lgpio.gpio_claim_output(self.gpio_handle, FSYNC_PIN, lgpio.SET)
-            
-            # SPI initialisieren
-            self.spi = spidev.SpiDev()
-            self.spi.open(SPI_BUS, SPI_DEVICE)
-            self.spi.max_speed_hz = SPI_FREQUENCY
-            self.spi.mode = 0b10  # SPI Modus 2
-            
-            # Initiales Reset
-            self.write_to_ad9833(RESET)
-            time.sleep(0.1)
-            
-            self.initialized = True
-            return True
-            
-        except Exception as e:
-            self.cleanup()
-            return False
-    
-    def write_to_ad9833(self, data):
-        """16-Bit Daten an AD9833 senden"""
-        if not self.initialized or self.gpio_handle is None or self.spi is None:
-            return False
-            
-        try:
-            # FSYNC auf LOW (Übertragung startet)
-            lgpio.gpio_write(self.gpio_handle, FSYNC_PIN, lgpio.CLEAR)
-            
-            # 16-Bit Daten in zwei 8-Bit Bytes aufteilen
-            high_byte = (data >> 8) & 0xFF
-            low_byte = data & 0xFF
-            self.spi.xfer2([high_byte, low_byte])
-            
-            # FSYNC auf HIGH (Übertragung beendet)
-            lgpio.gpio_write(self.gpio_handle, FSYNC_PIN, lgpio.SET)
-            
-            return True
-            
-        except Exception as e:
-            return False
-    
-    def set_frequency(self, freq_hz):
-        """Frequenz einstellen"""
-        if not (MIN_FREQUENCY <= freq_hz <= MAX_FREQUENCY):
-            return False
-            
-        try:
-            # Frequenzwort berechnen (28-Bit)
-            freq_word = int((freq_hz * (2**28)) / FMCLK)
-            
-            # Kritische Übertragungssequenz
-            if not self.write_to_ad9833(RESET):
-                return False
-            
-            # Lower 14 Bits
-            if not self.write_to_ad9833(FREQ0_REG | (freq_word & 0x3FFF)):
-                return False
-            
-            # Upper 14 Bits
-            if not self.write_to_ad9833(FREQ0_REG | ((freq_word >> 14) & 0x3FFF)):
-                return False
-            
-            return True
-            
-        except Exception as e:
-            return False
-    
-    def set_waveform(self, waveform):
-        """Wellenform aktivieren"""
-        try:
-            return self.write_to_ad9833(waveform)
-        except Exception as e:
-            return False
-    
-    def configure(self, freq_hz, waveform):
-        """Vollständige Konfiguration"""
-        if not self.set_frequency(freq_hz):
-            return False
-        
-        if not self.set_waveform(waveform):
-            return False
-            
-        return True
-    
-    def cleanup(self):
-        """Ressourcen freigeben"""
-        try:
-            if self.initialized and self.gpio_handle is not None and self.spi is not None:
-                self.write_to_ad9833(RESET)
-                time.sleep(0.1)
-            
-            if self.gpio_handle is not None:
-                lgpio.gpio_free(self.gpio_handle, FSYNC_PIN)
-                lgpio.gpiochip_close(self.gpio_handle)
-                self.gpio_handle = None
-            
-            if self.spi is not None:
-                self.spi.close()
-                self.spi = None
-                
-            self.initialized = False
-            
-        except Exception as e:
-            pass
+# Dash App initialisieren
+app = Dash(__name__)
+app.css.config.serve_locally = True
+app.scripts.config.serve_locally = True
+app.title = "AD9833 Funktionsgenerator"
 
-# Globaler Controller
-ad9833 = AD9833Controller()
-
-def get_ip_address():
+def get_ip_address() -> str:
     """Hilfsfunktion zum Abrufen der IP-Adresse des Geräts"""
     ip_address = '127.0.0.1'
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -181,215 +73,356 @@ def get_ip_address():
     
     return ip_address
 
-# Dash App erstellen
-app = dash.Dash(__name__)
-
-# CSS-Styling für besseres Aussehen
-external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
-app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
-
-# App Layout definieren
-app.layout = html.Div([
-    html.Div([
-        html.H1("AD9833 Funktionsgenerator", 
-                style={'textAlign': 'center', 'color': '#2c3e50', 'marginBottom': '20px'}),
-        
-        # IP-Adresse anzeigen
-        html.Div(id="ip-address-display",
-                style={'textAlign': 'center', 'marginBottom': '20px', 'color': '#7f8c8d'}),
-        
-        # Status-Anzeige
-        html.Div(id="status-display", 
-                style={'textAlign': 'center', 'marginBottom': '20px', 'padding': '10px',
-                      'backgroundColor': '#ecf0f1', 'borderRadius': '5px'}),
-        
-        # Frequenz-Eingabe
-        html.Div([
-            html.Label("Frequenz (Hz):", style={'fontWeight': 'bold', 'marginBottom': '10px'}),
-            dcc.Input(
-                id="frequency-input",
-                type="number",
-                value=1000,
-                min=MIN_FREQUENCY,
-                max=MAX_FREQUENCY,
-                step=0.1,
-                style={'width': '200px', 'padding': '5px', 'marginRight': '10px'}
-            ),
-            html.Span(f"Bereich: {MIN_FREQUENCY} - {MAX_FREQUENCY} Hz", 
-                     style={'color': '#7f8c8d', 'fontSize': '14px'})
-        ], style={'marginBottom': '20px'}),
-        
-        # Wellenform-Auswahl
-        html.Div([
-            html.Label("Wellenform:", style={'fontWeight': 'bold', 'marginBottom': '10px'}),
-            dcc.RadioItems(
-                id="waveform-selector",
-                options=[
-                    {'label': ' Sinuswelle', 'value': SINE_WAVE},
-                    {'label': ' Dreieckswelle', 'value': TRIANGLE_WAVE},
-                    {'label': ' Rechteckwelle', 'value': SQUARE_WAVE}
-                ],
-                value=SINE_WAVE,
-                style={'marginBottom': '20px'}
-            )
-        ], style={'marginBottom': '20px'}),
-        
-        # Steuerungsbuttons
-        html.Div([
-            html.Button('Hardware Initialisieren', id='init-button', n_clicks=0,
-                       style={'marginRight': '10px', 'padding': '10px 20px', 
-                             'backgroundColor': '#3498db', 'color': 'white', 'border': 'none',
-                             'borderRadius': '5px', 'cursor': 'pointer'}),
-            html.Button('Konfiguration Anwenden', id='apply-button', n_clicks=0,
-                       style={'marginRight': '10px', 'padding': '10px 20px',
-                             'backgroundColor': '#27ae60', 'color': 'white', 'border': 'none',
-                             'borderRadius': '5px', 'cursor': 'pointer'}),
-            html.Button('Stop/Reset', id='stop-button', n_clicks=0,
-                       style={'padding': '10px 20px', 'backgroundColor': '#e74c3c', 'color': 'white',
-                             'border': 'none', 'borderRadius': '5px', 'cursor': 'pointer'})
-        ], style={'textAlign': 'center', 'marginBottom': '20px'}),
-        
-        # Aktuelle Einstellungen anzeigen
-        html.Div(id="current-settings",
-                style={'backgroundColor': '#f8f9fa', 'padding': '15px', 'borderRadius': '5px',
-                      'border': '1px solid #dee2e6'})
-        
-    ], style={'maxWidth': '600px', 'margin': '0 auto', 'padding': '20px'})
-])
-
-# Callback für IP-Adresse anzeigen
-@app.callback(
-    Output('ip-address-display', 'children'),
-    Input('init-button', 'n_clicks')
-)
-def display_ip_address(n_clicks):
-    """IP-Adresse anzeigen"""
-    ip_address = get_ip_address()
-    return f"🌐 Zugriff über: http://{ip_address}:8050"
-
-# Callback für Hardware-Initialisierung
-@app.callback(
-    Output('status-display', 'children'),
-    Input('init-button', 'n_clicks')
-)
-def initialize_hardware(n_clicks):
-    """Hardware initialisieren"""
-    if n_clicks > 0:
-        try:
-            if ad9833.init_hardware():
-                return html.Div("✅ Hardware erfolgreich initialisiert", 
-                              style={'color': '#27ae60', 'fontWeight': 'bold'})
-            else:
-                return html.Div("❌ Hardware-Initialisierung fehlgeschlagen", 
-                              style={'color': '#e74c3c', 'fontWeight': 'bold'})
-        except Exception as e:
-            return html.Div(f"❌ Fehler: {str(e)}", 
-                          style={'color': '#e74c3c', 'fontWeight': 'bold'})
-    else:
-        return html.Div("Hardware nicht initialisiert", 
-                       style={'color': '#f39c12', 'fontWeight': 'bold'})
-
-# Callback für Konfiguration anwenden
-@app.callback(
-    Output('current-settings', 'children'),
-    [Input('apply-button', 'n_clicks'),
-     Input('stop-button', 'n_clicks')],
-    [dash.dependencies.State('frequency-input', 'value'),
-     dash.dependencies.State('waveform-selector', 'value')]
-)
-def apply_configuration(apply_clicks, stop_clicks, frequency, waveform):
-    """Konfiguration auf Hardware anwenden"""
-    ctx = callback_context
+def init_AD9833() -> bool:
+    """Initialisiert GPIO und SPI für AD9833"""
+    global gpio_handle, spi, current_status
     
-    if not ctx.triggered:
-        return html.Div("Keine Konfiguration aktiv")
+    if SIMULATION_MODE:
+        current_status = "Simulation - Hardware emuliert"
+        return True
     
-    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    try:
+        print("Öffne GPIO-Chip 4...")
+        # lgpio initialisieren - öffnet GPIO-Chip
+        gpio_handle = lgpio.gpiochip_open(4)  # gpiochip4 für Raspberry Pi 5
+        print("GPIO-Chip 4 geöffnet")
+
+        print(f"Konfiguriere GPIO Pin {FSYNC_PIN} als Ausgang...")
+        # FSYNC Pin als Ausgang konfigurieren (initial HIGH)
+        lgpio.gpio_claim_output(gpio_handle, FSYNC_PIN, lgpio.SET)  
+        print(f"GPIO Pin {FSYNC_PIN} konfiguriert")
+
+        print("Initialisiere SPI...")
+        # SPI initialisieren
+        spi = spidev.SpiDev()
+        spi.open(SPI_BUS, SPI_DEVICE)
+        spi.max_speed_hz = SPI_FREQUENCY
+        spi.mode = 0b10  # SPI Modus 2 (CPOL=1, CPHA=0)
+        print(f"SPI Bus {SPI_BUS}.{SPI_DEVICE} geöffnet (Geschwindigkeit: {SPI_FREQUENCY} Hz)")
+
+        print("Führe initiales Reset durch...")
+        # Initiales Reset des AD9833
+        reset_success = write_to_AD9833(RESET)
+        if not reset_success:
+            current_status = "Initiales Reset fehlgeschlagen"
+            return False
+            
+        time.sleep(0.1)  # Warten bis Reset abgeschlossen
+        current_status = "Hardware erfolgreich initialisiert"
+        return True
+        
+    except Exception as e:
+        current_status = f"Initialisierungsfehler: {e}"
+        cleanup_AD9833()
+        return False
+
+def write_to_AD9833(data: int) -> bool:
+    """Sendet 16-Bit Daten an AD9833"""
+    if SIMULATION_MODE:
+        return True
+        
+    if gpio_handle is None or spi is None:
+        return False
     
-    # Wellenform-Namen für Anzeige
+    try:
+        # FSYNC auf LOW setzen (Übertragung startet)
+        lgpio.gpio_write(gpio_handle, FSYNC_PIN, lgpio.CLEAR)
+        
+        # 16-Bit Daten in zwei 8-Bit Bytes aufteilen und senden
+        high_byte = (data >> 8) & 0xFF
+        low_byte = data & 0xFF
+        spi.xfer2([high_byte, low_byte])
+        
+        # FSYNC auf HIGH setzen (Übertragung beendet)
+        lgpio.gpio_write(gpio_handle, FSYNC_PIN, lgpio.SET)
+        
+        return True
+        
+    except Exception as e:
+        return False
+
+def set_ad9833_frequency(freq_hz: float) -> bool:
+    """Stellt die Ausgangsfrequenz des AD9833 ein"""
+    global current_status
+    
+    if not (MIN_FREQUENCY <= freq_hz <= MAX_FREQUENCY):
+        current_status = f"Frequenz {freq_hz} Hz außerhalb des gültigen Bereichs"
+        return False
+    
+    try:
+        # Frequenzwort berechnen (28-Bit)
+        freq_word = int((freq_hz * (2**28)) / FMCLK)
+        
+        # KRITISCHE ÜBERTRAGUNGSSEQUENZ
+        # 1. Reset aktivieren
+        if not write_to_AD9833(RESET):
+            current_status = "Reset-Befehl fehlgeschlagen"
+            return False
+        
+        # 2. Lower 14 Bits schreiben
+        if not write_to_AD9833(FREQ0_REG | (freq_word & 0x3FFF)):
+            current_status = "Lower Bits Übertragung fehlgeschlagen"
+            return False
+        
+        # 3. Upper 14 Bits schreiben  
+        if not write_to_AD9833(FREQ0_REG | ((freq_word >> 14) & 0x3FFF)):
+            current_status = "Upper Bits Übertragung fehlgeschlagen"
+            return False
+        
+        current_status = f"Frequenz auf {freq_hz} Hz eingestellt"
+        return True
+        
+    except Exception as e:
+        current_status = f"Fehler beim Setzen der Frequenz: {e}"
+        return False
+
+def activate_waveform(waveform: int) -> bool:
+    """Aktiviert die gewählte Wellenform"""
+    global current_status
+    
     waveform_names = {
         SINE_WAVE: "Sinuswelle",
         TRIANGLE_WAVE: "Dreieckswelle", 
         SQUARE_WAVE: "Rechteckwelle"
     }
     
-    if button_id == 'stop-button' and stop_clicks > 0:
-        # Stop/Reset
-        try:
-            if ad9833.initialized:
-                ad9833.write_to_ad9833(RESET)
-                return html.Div([
-                    html.H4("⏹️ Generator Gestoppt", style={'color': '#e74c3c'}),
-                    html.P("AD9833 wurde zurückgesetzt")
-                ])
-            else:
-                return html.Div("Hardware nicht initialisiert", 
-                              style={'color': '#f39c12'})
-        except Exception as e:
-            return html.Div(f"Fehler beim Stoppen: {str(e)}", 
-                          style={'color': '#e74c3c'})
-    
-    elif button_id == 'apply-button' and apply_clicks > 0:
-        # Konfiguration anwenden
-        if not ad9833.initialized:
-            return html.Div("❌ Hardware nicht initialisiert! Bitte zuerst Hardware initialisieren.", 
-                          style={'color': '#e74c3c', 'fontWeight': 'bold'})
+    try:
+        # Wellenform aktivieren (beendet gleichzeitig Reset-Zustand)
+        if not write_to_AD9833(waveform):
+            current_status = "Wellenform-Aktivierung fehlgeschlagen"
+            return False
         
-        if frequency is None or not (MIN_FREQUENCY <= frequency <= MAX_FREQUENCY):
-            return html.Div(f"❌ Ungültige Frequenz! Bereich: {MIN_FREQUENCY} - {MAX_FREQUENCY} Hz", 
-                          style={'color': '#e74c3c', 'fontWeight': 'bold'})
+        waveform_name = waveform_names.get(waveform, f"Unbekannt (0x{waveform:04X})")
+        current_status = f"Wellenform {waveform_name} aktiviert"
+        return True
         
-        try:
-            if ad9833.configure(frequency, waveform):
-                global current_freq, current_waveform
-                current_freq = frequency
-                current_waveform = waveform
-                
-                return html.Div([
-                    html.H4("✅ Konfiguration Aktiv", style={'color': '#27ae60'}),
-                    html.P(f"Frequenz: {frequency} Hz"),
-                    html.P(f"Wellenform: {waveform_names.get(waveform, 'Unbekannt')}"),
-                    html.P("Signal wird ausgegeben!", style={'fontWeight': 'bold'})
-                ])
-            else:
-                return html.Div("❌ Konfiguration fehlgeschlagen", 
-                              style={'color': '#e74c3c', 'fontWeight': 'bold'})
-        except Exception as e:
-            return html.Div(f"❌ Fehler: {str(e)}", 
-                          style={'color': '#e74c3c', 'fontWeight': 'bold'})
+    except Exception as e:
+        current_status = f"Fehler beim Aktivieren der Wellenform: {e}"
+        return False
+
+def configure_AD9833(freq_hz: float, waveform: int) -> bool:
+    """Komplette Konfiguration des AD9833 mit korrekter Sequenz"""
+    global current_status
     
-    # Standardanzeige
-    return html.Div([
-        html.P(f"Eingestellte Frequenz: {frequency} Hz"),
-        html.P(f"Eingestellte Wellenform: {waveform_names.get(waveform, 'Unbekannt')}")
-    ])
+    try:
+        # Schritt 1: Frequenz einstellen
+        if not set_ad9833_frequency(freq_hz):
+            return False
+        
+        # Schritt 2: Wellenform aktivieren
+        if not activate_waveform(waveform):
+            return False
+        
+        current_status = f"Konfiguration erfolgreich abgeschlossen"
+        return True
+        
+    except Exception as e:
+        current_status = f"Konfigurationsfehler: {e}"
+        return False
 
-# Cleanup beim Beenden
-import atexit
-def cleanup_on_exit():
-    """Cleanup beim Beenden der App"""
-    ad9833.cleanup()
+def cleanup_AD9833():
+    """Räumt GPIO und SPI Ressourcen auf"""
+    global gpio_handle, spi, current_status
+    
+    if SIMULATION_MODE:
+        return
+    
+    try:
+        # AD9833 zurücksetzen vor dem Beenden
+        if gpio_handle is not None and spi is not None:
+            write_to_AD9833(RESET)
+            time.sleep(0.1)
+        
+        # GPIO freigeben
+        if gpio_handle is not None:
+            lgpio.gpio_free(gpio_handle, FSYNC_PIN)
+            lgpio.gpiochip_close(gpio_handle)
+            gpio_handle = None
+        
+        # SPI schließen
+        if spi is not None:
+            spi.close()
+            spi = None
+            
+        current_status = "Ressourcen freigegeben"
+            
+    except Exception as e:
+        current_status = f"Cleanup-Fehler: {e}"
 
-atexit.register(cleanup_on_exit)
+# Layout der Dash-Anwendung
+app.layout = html.Div([
+    # Header
+    html.H1("AD9833 Funktionsgenerator", 
+            style={'textAlign': 'center', 'color': 'white', 'backgroundColor': '#e74c3c',
+                   'padding': '20px', 'margin': '0 0 30px 0', 'borderRadius': '8px'}),
+    
+    # Status-Anzeige
+    html.Div([
+        html.H3("Status:", style={'color': '#2c3e50', 'marginBottom': '10px'}),
+        html.Div(id='status-display', 
+                style={'padding': '15px', 'backgroundColor': '#ecf0f1', 
+                       'borderRadius': '5px', 'marginBottom': '30px',
+                       'border': '2px solid #bdc3c7'})
+    ]),
+    
+    # Steuerungsbereich
+    html.Div([
+        # Frequenz-Einstellung
+        html.Div([
+            html.H3("Frequenz", style={'color': '#2c3e50', 'marginBottom': '15px'}),
+            html.Label(f"Frequenz ({MIN_FREQUENCY} - {MAX_FREQUENCY} Hz):", 
+                      style={'fontWeight': 'bold', 'marginBottom': '10px', 'display': 'block'}),
+            dcc.Input(
+                id='frequency-input',
+                type='number',
+                min=MIN_FREQUENCY,
+                max=MAX_FREQUENCY,
+                step=0.1,
+                value=1000,
+                style={'width': '200px', 'padding': '10px', 'fontSize': '16px',
+                       'border': '2px solid #bdc3c7', 'borderRadius': '5px'}
+            ),
+            html.Span(" Hz", style={'marginLeft': '10px', 'fontSize': '16px'})
+        ], style={'marginBottom': '30px'}),
+        
+        # Wellenform-Auswahl
+        html.Div([
+            html.H3("Wellenform", style={'color': '#2c3e50', 'marginBottom': '15px'}),
+            dcc.RadioItems(
+                id='waveform-selector',
+                options=[
+                    {'label': ' Sinuswelle', 'value': SINE_WAVE},
+                    {'label': ' Dreieckswelle', 'value': TRIANGLE_WAVE},
+                    {'label': ' Rechteckwelle', 'value': SQUARE_WAVE}
+                ],
+                value=SINE_WAVE,
+                style={'fontSize': '16px'},
+                labelStyle={'display': 'block', 'marginBottom': '10px', 'cursor': 'pointer'}
+            )
+        ], style={'marginBottom': '40px'}),
+        
+        # Steuerungsbuttons
+        html.Div([
+            html.Button(
+                'Hardware initialisieren',
+                id='init-button',
+                style={'backgroundColor': '#3498db', 'color': 'white', 'border': 'none',
+                       'padding': '15px 30px', 'fontSize': '16px', 'borderRadius': '5px',
+                       'cursor': 'pointer', 'marginRight': '20px', 'fontWeight': 'bold'}
+            ),
+            html.Button(
+                'Signal konfigurieren',
+                id='configure-button',
+                style={'backgroundColor': '#27ae60', 'color': 'white', 'border': 'none',
+                       'padding': '15px 30px', 'fontSize': '16px', 'borderRadius': '5px',
+                       'cursor': 'pointer', 'marginRight': '20px', 'fontWeight': 'bold'}
+            ),
+            html.Button(
+                'Reset',
+                id='reset-button',
+                style={'backgroundColor': '#e67e22', 'color': 'white', 'border': 'none',
+                       'padding': '15px 30px', 'fontSize': '16px', 'borderRadius': '5px',
+                       'cursor': 'pointer', 'fontWeight': 'bold'}
+            )
+        ], style={'textAlign': 'center', 'marginBottom': '40px'}),
+        
+        # Informationsbereich
+        html.Div([
+            html.H3("Geräteinformationen", style={'color': '#2c3e50', 'marginBottom': '15px'}),
+            html.Div([
+                html.P(f"• Chip: AD9833 DDS-Funktionsgenerator"),
+                html.P(f"• Taktfrequenz: {FMCLK/1000000:.1f} MHz"),
+                html.P(f"• Frequenzbereich: {MIN_FREQUENCY} - {MAX_FREQUENCY/1000:.1f} kHz"),
+                html.P(f"• Verfügbare Wellenformen: Sinus, Dreieck, Rechteck"),
+                html.P(f"• SPI-Bus: {SPI_BUS}.{SPI_DEVICE}"),
+                html.P(f"• FSYNC-Pin: GPIO {FSYNC_PIN}"),
+                html.P(f"• Betriebsmodus: {'Simulation' if SIMULATION_MODE else 'Hardware'}")
+            ], style={'backgroundColor': '#f8f9fa', 'padding': '20px', 
+                     'borderRadius': '5px', 'border': '1px solid #dee2e6'})
+        ])
+    ], style={'maxWidth': '600px', 'margin': '0 auto', 'padding': '20px'})
+])
+
+# Callbacks für Interaktivität
+@app.callback(
+    Output('status-display', 'children'),
+    [Input('init-button', 'n_clicks'),
+     Input('configure-button', 'n_clicks'),
+     Input('reset-button', 'n_clicks')],
+    [State('frequency-input', 'value'),
+     State('waveform-selector', 'value')]
+)
+def handle_button_actions(init_clicks, config_clicks, reset_clicks, 
+                         frequency, waveform):
+    """Behandelt Button-Aktionen und aktualisiert den Status"""
+    global current_status
+    
+    # Bestimme welcher Button gedrückt wurde
+    from dash import callback_context
+    
+    if not callback_context.triggered:
+        return current_status
+    
+    button_id = callback_context.triggered[0]['prop_id'].split('.')[0]
+    
+    if button_id == 'init-button' and init_clicks:
+        init_success = init_AD9833()
+        if init_success:
+            return html.Span(current_status, style={'color': '#27ae60', 'fontWeight': 'bold'})
+        else:
+            return html.Span(current_status, style={'color': '#e74c3c', 'fontWeight': 'bold'})
+    
+    elif button_id == 'configure-button' and config_clicks:
+        if frequency is None:
+            current_status = "Bitte geben Sie eine gültige Frequenz ein"
+            return html.Span(current_status, style={'color': '#e67e22', 'fontWeight': 'bold'})
+        
+        config_success = configure_AD9833(frequency, waveform)
+        if config_success:
+            waveform_names = {SINE_WAVE: "Sinuswelle", TRIANGLE_WAVE: "Dreieckswelle", SQUARE_WAVE: "Rechteckwelle"}
+            waveform_name = waveform_names.get(waveform, "Unbekannt")
+            status_msg = f"Signal aktiv: {frequency} Hz, {waveform_name}"
+            return html.Span(status_msg, style={'color': '#27ae60', 'fontWeight': 'bold'})
+        else:
+            return html.Span(current_status, style={'color': '#e74c3c', 'fontWeight': 'bold'})
+    
+    elif button_id == 'reset-button' and reset_clicks:
+        if write_to_AD9833(RESET):
+            current_status = "AD9833 wurde zurückgesetzt"
+            return html.Span(current_status, style={'color': '#3498db', 'fontWeight': 'bold'})
+        else:
+            current_status = "Reset fehlgeschlagen"
+            return html.Span(current_status, style={'color': '#e74c3c', 'fontWeight': 'bold'})
+    
+    return html.Span(current_status, style={'color': '#7f8c8d'})
+
+# Automatische Hardware-Initialisierung beim Start
+@app.callback(
+    Output('init-button', 'style'),
+    [Input('init-button', 'id')]
+)
+def auto_init_on_start(button_id):
+    """Automatische Initialisierung beim Start der Anwendung"""
+    init_AD9833()
+    return {'backgroundColor': '#3498db', 'color': 'white', 'border': 'none',
+            'padding': '15px 30px', 'fontSize': '16px', 'borderRadius': '5px',
+            'cursor': 'pointer', 'marginRight': '20px', 'fontWeight': 'bold'}
 
 if __name__ == '__main__':
+    print(f"Starte Funktionsgenerator im {'Simulation' if SIMULATION_MODE else 'Hardware'}-Modus")
+    
+    # Automatische Initialisierung beim Start
+    init_AD9833()
+    
+    # Cleanup beim Beenden registrieren
+    import atexit
+    atexit.register(cleanup_AD9833)
+    
     try:
-        # IP-Adresse ermitteln
-        ip_address = get_ip_address()
-        
-        # App starten ohne Terminal-Ausgaben
-        import os
-        import sys
-        
-        # Dash Debug-Modus deaktivieren und Logs unterdrücken
-        import logging
-        log = logging.getLogger('werkzeug')
-        log.setLevel(logging.ERROR)
-        app.run(debug=True, host=ip_address, port=8060, dev_tools_silence_routes_logging=True)
-
+        # Server auf Port 8060 starten, Terminal-Logs unterdrücken
+        app.run(host='0.0.0.0', port=8060, debug=True)
     except KeyboardInterrupt:
-        pass
-    except Exception as e:
-        pass
+        print("\nAnwendung durch Benutzer beendet")
+        cleanup_AD9833()
     finally:
-        ad9833.cleanup()
+        cleanup_AD9833()
