@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Funktionsgenerator Web-Interface
+Funktionsgenerator Web Interface
 """
 
 import dash
@@ -10,6 +10,7 @@ import lgpio
 import spidev
 import time
 import threading
+import socket
 
 # AD9833 Register-Konstanten
 FREQ0_REG = 0x4000
@@ -75,7 +76,6 @@ class AD9833Controller:
             return True
             
         except Exception as e:
-            print(f"Fehler bei Hardware-Initialisierung: {e}")
             self.cleanup()
             return False
     
@@ -99,7 +99,6 @@ class AD9833Controller:
             return True
             
         except Exception as e:
-            print(f"Fehler beim Schreiben: {e}")
             return False
     
     def set_frequency(self, freq_hz):
@@ -126,7 +125,6 @@ class AD9833Controller:
             return True
             
         except Exception as e:
-            print(f"Fehler beim Setzen der Frequenz: {e}")
             return False
     
     def set_waveform(self, waveform):
@@ -134,7 +132,6 @@ class AD9833Controller:
         try:
             return self.write_to_ad9833(waveform)
         except Exception as e:
-            print(f"Fehler beim Setzen der Wellenform: {e}")
             return False
     
     def configure(self, freq_hz, waveform):
@@ -166,10 +163,23 @@ class AD9833Controller:
             self.initialized = False
             
         except Exception as e:
-            print(f"Fehler beim Cleanup: {e}")
+            pass
 
 # Globaler Controller
 ad9833 = AD9833Controller()
+
+def get_ip_address():
+    """Hilfsfunktion zum Abrufen der IP-Adresse des Geräts"""
+    ip_address = '127.0.0.1'
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    
+    try:
+        sock.connect(('1.1.1.1', 1))
+        ip_address = sock.getsockname()[0]
+    finally:
+        sock.close()
+    
+    return ip_address
 
 # Dash App erstellen
 app = dash.Dash(__name__)
@@ -182,7 +192,11 @@ app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
 app.layout = html.Div([
     html.Div([
         html.H1("AD9833 Funktionsgenerator", 
-                style={'textAlign': 'center', 'color': '#2c3e50', 'marginBottom': '30px'}),
+                style={'textAlign': 'center', 'color': '#2c3e50', 'marginBottom': '20px'}),
+        
+        # IP-Adresse anzeigen
+        html.Div(id="ip-address-display",
+                style={'textAlign': 'center', 'marginBottom': '20px', 'color': '#7f8c8d'}),
         
         # Status-Anzeige
         html.Div(id="status-display", 
@@ -242,6 +256,16 @@ app.layout = html.Div([
         
     ], style={'maxWidth': '600px', 'margin': '0 auto', 'padding': '20px'})
 ])
+
+# Callback für IP-Adresse anzeigen
+@app.callback(
+    Output('ip-address-display', 'children'),
+    Input('init-button', 'n_clicks')
+)
+def display_ip_address(n_clicks):
+    """IP-Adresse anzeigen"""
+    ip_address = get_ip_address()
+    return f"🌐 Zugriff über: http://{ip_address}:8050"
 
 # Callback für Hardware-Initialisierung
 @app.callback(
@@ -350,26 +374,22 @@ atexit.register(cleanup_on_exit)
 
 if __name__ == '__main__':
     try:
-        print("=" * 50)
-        print("AD9833 Funktionsgenerator Web-Interface")
-        print("=" * 50)
-        print(f"Frequenzbereich: {MIN_FREQUENCY} - {MAX_FREQUENCY} Hz")
-        print("Verfügbare Wellenformen:")
-        print("  - Sinuswelle")
-        print("  - Dreieckswelle") 
-        print("  - Rechteckwelle")
-        print()
-        print("Öffnen Sie http://localhost:8060 im Browser")
-        print("Drücken Sie Ctrl+C zum Beenden")
-        print("=" * 50)
+        # IP-Adresse ermitteln
+        ip_address = get_ip_address()
         
-        # App starten
-        app.run(debug=False, host='0.0.0.0', port=8060)
+        # App starten ohne Terminal-Ausgaben
+        import os
+        import sys
         
+        # Dash Debug-Modus deaktivieren und Logs unterdrücken
+        import logging
+        log = logging.getLogger('werkzeug')
+        log.setLevel(logging.ERROR)
+        app.run(debug=True, host=ip_address, port=8060, dev_tools_silence_routes_logging=True)
+
     except KeyboardInterrupt:
-        print("\nProgramm durch Benutzer beendet")
+        pass
     except Exception as e:
-        print(f"Fehler beim Starten der App: {e}")
+        pass
     finally:
         ad9833.cleanup()
-        print("Cleanup abgeschlossen")
