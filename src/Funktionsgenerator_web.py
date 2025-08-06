@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 Web-basierter Funktionsgenerator mit AD9833
-Dieses Modul stellt eine webbasierte Benutzeroberfläche für den AD9833 Funktionsgenerator bereit.
 """
 
 import socket
@@ -200,7 +199,17 @@ def activate_waveform(waveform: int) -> bool:
         current_status = f"Fehler beim Aktivieren der Wellenform: {e}"
         return False
 
-def configure_AD9833(freq_hz: float, waveform: int) -> bool:
+def combined_init_and_configure(freq_hz: float, waveform: int) -> bool:
+    """Kombinierte Initialisierung und Konfiguration in einem Schritt"""
+    global current_status
+    
+    # Schritt 1: Hardware initialisieren falls noch nicht geschehen
+    if gpio_handle is None or spi is None:
+        if not init_AD9833():
+            return False
+    
+    # Schritt 2: Signal konfigurieren
+    return configure_AD9833(freq_hz, waveform)
     """Komplette Konfiguration des AD9833 mit korrekter Sequenz"""
     global current_status
     
@@ -304,15 +313,8 @@ app.layout = html.Div([
         # Steuerungsbuttons
         html.Div([
             html.Button(
-                'Hardware initialisieren',
-                id='init-button',
-                style={'backgroundColor': '#3498db', 'color': 'white', 'border': 'none',
-                       'padding': '15px 30px', 'fontSize': '16px', 'borderRadius': '5px',
-                       'cursor': 'pointer', 'marginRight': '20px', 'fontWeight': 'bold'}
-            ),
-            html.Button(
-                'Signal konfigurieren',
-                id='configure-button',
+                'Signal aktivieren',
+                id='activate-button',
                 style={'backgroundColor': '#27ae60', 'color': 'white', 'border': 'none',
                        'padding': '15px 30px', 'fontSize': '16px', 'borderRadius': '5px',
                        'cursor': 'pointer', 'marginRight': '20px', 'fontWeight': 'bold'}
@@ -324,36 +326,19 @@ app.layout = html.Div([
                        'padding': '15px 30px', 'fontSize': '16px', 'borderRadius': '5px',
                        'cursor': 'pointer', 'fontWeight': 'bold'}
             )
-        ], style={'textAlign': 'center', 'marginBottom': '40px'}),
-        
-        # Informationsbereich
-        html.Div([
-            html.H3("Geräteinformationen", style={'color': '#2c3e50', 'marginBottom': '15px'}),
-            html.Div([
-                html.P(f"• Chip: AD9833 DDS-Funktionsgenerator"),
-                html.P(f"• Taktfrequenz: {FMCLK/1000000:.1f} MHz"),
-                html.P(f"• Frequenzbereich: {MIN_FREQUENCY} - {MAX_FREQUENCY/1000:.1f} kHz"),
-                html.P(f"• Verfügbare Wellenformen: Sinus, Dreieck, Rechteck"),
-                html.P(f"• SPI-Bus: {SPI_BUS}.{SPI_DEVICE}"),
-                html.P(f"• FSYNC-Pin: GPIO {FSYNC_PIN}"),
-                html.P(f"• Betriebsmodus: {'Simulation' if SIMULATION_MODE else 'Hardware'}")
-            ], style={'backgroundColor': '#f8f9fa', 'padding': '20px', 
-                     'borderRadius': '5px', 'border': '1px solid #dee2e6'})
-        ])
+        ], style={'textAlign': 'center', 'marginBottom': '40px'})
     ], style={'maxWidth': '600px', 'margin': '0 auto', 'padding': '20px'})
 ])
 
 # Callbacks für Interaktivität
 @app.callback(
     Output('status-display', 'children'),
-    [Input('init-button', 'n_clicks'),
-     Input('configure-button', 'n_clicks'),
+    [Input('activate-button', 'n_clicks'),
      Input('reset-button', 'n_clicks')],
     [State('frequency-input', 'value'),
      State('waveform-selector', 'value')]
 )
-def handle_button_actions(init_clicks, config_clicks, reset_clicks, 
-                         frequency, waveform):
+def handle_button_actions(activate_clicks, reset_clicks, frequency, waveform):
     """Behandelt Button-Aktionen und aktualisiert den Status"""
     global current_status
     
@@ -365,20 +350,13 @@ def handle_button_actions(init_clicks, config_clicks, reset_clicks,
     
     button_id = callback_context.triggered[0]['prop_id'].split('.')[0]
     
-    if button_id == 'init-button' and init_clicks:
-        init_success = init_AD9833()
-        if init_success:
-            return html.Span(current_status, style={'color': '#27ae60', 'fontWeight': 'bold'})
-        else:
-            return html.Span(current_status, style={'color': '#e74c3c', 'fontWeight': 'bold'})
-    
-    elif button_id == 'configure-button' and config_clicks:
+    if button_id == 'activate-button' and activate_clicks:
         if frequency is None:
             current_status = "Bitte geben Sie eine gültige Frequenz ein"
             return html.Span(current_status, style={'color': '#e67e22', 'fontWeight': 'bold'})
         
-        config_success = configure_AD9833(frequency, waveform)
-        if config_success:
+        success = combined_init_and_configure(frequency, waveform)
+        if success:
             waveform_names = {SINE_WAVE: "Sinuswelle", TRIANGLE_WAVE: "Dreieckswelle", SQUARE_WAVE: "Rechteckwelle"}
             waveform_name = waveform_names.get(waveform, "Unbekannt")
             status_msg = f"Signal aktiv: {frequency} Hz, {waveform_name}"
@@ -398,13 +376,13 @@ def handle_button_actions(init_clicks, config_clicks, reset_clicks,
 
 # Automatische Hardware-Initialisierung beim Start
 @app.callback(
-    Output('init-button', 'style'),
-    [Input('init-button', 'id')]
+    Output('activate-button', 'style'),
+    [Input('activate-button', 'id')]
 )
 def auto_init_on_start(button_id):
     """Automatische Initialisierung beim Start der Anwendung"""
     init_AD9833()
-    return {'backgroundColor': '#3498db', 'color': 'white', 'border': 'none',
+    return {'backgroundColor': '#27ae60', 'color': 'white', 'border': 'none',
             'padding': '15px 30px', 'fontSize': '16px', 'borderRadius': '5px',
             'cursor': 'pointer', 'marginRight': '20px', 'fontWeight': 'bold'}
 
@@ -420,7 +398,8 @@ if __name__ == '__main__':
     
     try:
         # Server auf Port 8060 starten, Terminal-Logs unterdrücken
-        app.run(host='0.0.0.0', port=8060, debug=True)
+        ip_address = get_ip_address()
+        app.run(host=ip_address, port=8060, debug=True)
     except KeyboardInterrupt:
         print("\nAnwendung durch Benutzer beendet")
         cleanup_AD9833()
