@@ -364,7 +364,7 @@ if __name__ == '__main__':
         print("=" * 50)
         
         # App starten
-        app.run_server(debug=False, host='0.0.0.0', port=8060)
+        app.run(debug=False, host='0.0.0.0', port=8060)
         
     except KeyboardInterrupt:
         print("\nProgramm durch Benutzer beendet")
