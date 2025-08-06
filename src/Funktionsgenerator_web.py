@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Web-basierter Funktionsgenerator mit AD9833
+Dieses Modul stellt eine webbasierte Benutzeroberfläche für den AD9833 Funktionsgenerator bereit.
 """
 
 import socket
@@ -81,25 +82,18 @@ def init_AD9833() -> bool:
         return True
     
     try:
-        print("Öffne GPIO-Chip 4...")
         # lgpio initialisieren - öffnet GPIO-Chip
         gpio_handle = lgpio.gpiochip_open(4)  # gpiochip4 für Raspberry Pi 5
-        print("GPIO-Chip 4 geöffnet")
 
-        print(f"Konfiguriere GPIO Pin {FSYNC_PIN} als Ausgang...")
         # FSYNC Pin als Ausgang konfigurieren (initial HIGH)
-        lgpio.gpio_claim_output(gpio_handle, FSYNC_PIN, lgpio.SET)  
-        print(f"GPIO Pin {FSYNC_PIN} konfiguriert")
+        lgpio.gpio_claim_output(gpio_handle, FSYNC_PIN, lgpio.SET)
 
-        print("Initialisiere SPI...")
         # SPI initialisieren
         spi = spidev.SpiDev()
         spi.open(SPI_BUS, SPI_DEVICE)
         spi.max_speed_hz = SPI_FREQUENCY
         spi.mode = 0b10  # SPI Modus 2 (CPOL=1, CPHA=0)
-        print(f"SPI Bus {SPI_BUS}.{SPI_DEVICE} geöffnet (Geschwindigkeit: {SPI_FREQUENCY} Hz)")
 
-        print("Führe initiales Reset durch...")
         # Initiales Reset des AD9833
         reset_success = write_to_AD9833(RESET)
         if not reset_success:
@@ -239,24 +233,42 @@ def cleanup_AD9833():
     try:
         # AD9833 zurücksetzen vor dem Beenden
         if gpio_handle is not None and spi is not None:
-            write_to_AD9833(RESET)
-            time.sleep(0.1)
+            try:
+                write_to_AD9833(RESET)
+                time.sleep(0.1)
+            except:
+                pass  # Ignoriere Fehler beim Reset
         
-        # GPIO freigeben
+        # GPIO freigeben - nur wenn es tatsächlich allokiert war
         if gpio_handle is not None:
-            lgpio.gpio_free(gpio_handle, FSYNC_PIN)
-            lgpio.gpiochip_close(gpio_handle)
+            try:
+                # Prüfe ob GPIO bereits allokiert ist bevor wir versuchen es freizugeben
+                lgpio.gpio_free(gpio_handle, FSYNC_PIN)
+            except Exception as gpio_error:
+                # GPIO war möglicherweise nicht allokiert - das ist ok
+                if "not allocated" not in str(gpio_error).lower():
+                    print(f"GPIO-Freigabe Warnung: {gpio_error}")
+            
+            try:
+                lgpio.gpiochip_close(gpio_handle)
+            except Exception as chip_error:
+                print(f"GPIO-Chip schließen Warnung: {chip_error}")
+            
             gpio_handle = None
         
         # SPI schließen
         if spi is not None:
-            spi.close()
+            try:
+                spi.close()
+            except Exception as spi_error:
+                print(f"SPI schließen Warnung: {spi_error}")
             spi = None
             
         current_status = "Ressourcen freigegeben"
             
     except Exception as e:
         current_status = f"Cleanup-Fehler: {e}"
+        print(f"Cleanup-Fehler: {e}")  # Für Debugging
 
 # Layout der Dash-Anwendung
 app.layout = html.Div([
