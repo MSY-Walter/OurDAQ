@@ -23,10 +23,11 @@ DAC_SPAN = -10.75           # Maximale negative Spannung des DACs
 
 spi = spidev.SpiDev()
 gpio_handle = None
+hat = None
 
 def setup_hardware():
-    """Initialisiert SPI und GPIO."""
-    global gpio_handle
+    """Initialisiert SPI, GPIO und MCC 118."""
+    global gpio_handle, hat
     try:
         spi.open(0, 0)
         spi.max_speed_hz = 1000000
@@ -35,6 +36,10 @@ def setup_hardware():
         gpio_handle = lgpio.gpiochip_open(0)
         lgpio.gpio_claim_output(gpio_handle, CS_PIN)
         lgpio.gpio_write(gpio_handle, CS_PIN, 1)
+
+        address = select_hat_device(HatIDs.MCC_118)
+        hat = mcc118(address)
+        
         print("Hardware erfolgreich initialisiert.")
     except Exception as e:
         print(f"Fehler bei der Hardware-Initialisierung: {e}")
@@ -42,6 +47,10 @@ def setup_hardware():
 
 def cleanup_hardware():
     """Schließt SPI und gibt GPIO-Ressourcen frei."""
+    if hat and hat.status().running:
+        hat.a_in_scan_stop()
+        hat.a_in_scan_cleanup()
+
     if gpio_handle:
         try:
             write_dac_minus(0) # DAC auf 0V setzen
@@ -74,7 +83,7 @@ def write_dac_minus(value):
     high_byte = (data >> 8) & 0xFF
     low_byte = data & 0xFF
     
-    print(f"Sende SPI DAC-Wert {value} (Binär: {data:016b}) für {-10.75 * (1 - value/MAX_DAC_VALUE):.2f} V")
+    # print(f"Sende SPI DAC-Wert {value} für {-10.75 * (1 - value/MAX_DAC_VALUE):.2f} V")
     
     lgpio.gpio_write(gpio_handle, CS_PIN, 0)
     spi.xfer2([high_byte, low_byte])
@@ -82,7 +91,7 @@ def write_dac_minus(value):
 
 def set_voltage_minus(voltage):
     """
-    Stellt die Spannung auf der Minus-Seite ein, indem der DAC-Wert berechnet wird.
+    Stellt die Spannung auf der Minus-Seite ein.
     
     :param voltage: Die gewünschte Spannung in Volt (-10.75 bis 0).
     """
@@ -90,12 +99,13 @@ def set_voltage_minus(voltage):
         print(f"Ungültige Spannung: {voltage} V. Der gültige Bereich ist {DAC_SPAN}V bis 0V.")
         return
         
-    # Lineare Skalierung: 0V -> 4095, -10.75V -> 0
     dac_value = int((1 - (voltage / DAC_SPAN)) * MAX_DAC_VALUE)
     write_dac_minus(dac_value)
+    print(f"Spannung auf {voltage:.2f} V eingestellt.")
 
-def strombegrenzung_minus():
-    """Führt die kontinuierliche Strommessung durch."""
+
+def continuous_measurement():
+    """Führt die kontinuierliche Strommessung und -ausgabe durch."""
     channels = [4]
     channel_mask = chan_list_to_mask(channels)
     num_channels = len(channels)
@@ -103,34 +113,23 @@ def strombegrenzung_minus():
     options = OptionFlags.CONTINUOUS
 
     try:
-        address = select_hat_device(HatIDs.MCC_118)
-        hat = mcc118(address)
         actual_scan_rate = hat.a_in_scan_actual_rate(num_channels, scan_rate)
         
-        print('\nMCC 118 Strommessung MINUS (Kanal 4)')
+        print('\nStarte Messung...')
         print('    Scan-Rate (tatsächlich): ', actual_scan_rate, 'Hz')
         
         hat.a_in_scan_start(channel_mask, 0, scan_rate, options)
         print('\nMessung läuft ... (Strg+C zum Beenden)\n')
-        print('Samples Read      Scan Count        Spannung (V)      Strom (A)')
         
-        read_and_display_data_minus(hat, num_channels)
+        total_samples_read = 0
+        read_request_size = READ_ALL_AVAILABLE
+        timeout = 5.0
         
-    except (HatError, ValueError) as err:
-        print('\nFehler:', err)
-    finally:
-        if 'hat' in locals() and hat.status().running:
-            hat.a_in_scan_stop()
-            hat.a_in_scan_cleanup()
+        # Header für die Live-Anzeige
+        print(f'{"Spannung [V]":<20} {"Strom [A]":<20}', end='')
 
-def read_and_display_data_minus(hat, num_channels):
-    """Liest Daten aus dem MCC 118 und berechnet den Strom."""
-    total_samples_read = 0
-    timeout = 5.0
-
-    while True:
-        try:
-            read_result = hat.a_in_scan_read(READ_ALL_AVAILABLE, timeout)
+        while hat.status().running:
+            read_result = hat.a_in_scan_read(read_request_size, timeout)
             
             if read_result.hardware_overrun or read_result.buffer_overrun:
                 print('\n\nÜberlauf erkannt. Messung stoppt.\n')
@@ -146,14 +145,20 @@ def read_and_display_data_minus(hat, num_channels):
             voltage = read_result.data[index]
             current = -voltage / (VERSTAERKUNG * SHUNT_WIDERSTAND)
             
-            # Ausgabe auf einer Zeile
-            print(f'\r{samples_read_per_channel:12}      {total_samples_read:12}        {voltage:10.5f} V      {current:10.5f} A', end='', flush=True)
+            # Ausgabe auf einer Zeile, die ständig aktualisiert wird
+            print(f'\r{voltage:<20.5f} {current:<20.5f}', end='', flush=True)
 
             time.sleep(0.1)
 
-        except KeyboardInterrupt:
-            break
-    print('\n')
+    except (HatError, ValueError) as err:
+        print(f'\nFehler: {err}')
+    except KeyboardInterrupt:
+        print("\nMessung beendet durch Benutzer.")
+    finally:
+        if hat.status().running:
+            hat.a_in_scan_stop()
+            hat.a_in_scan_cleanup()
+
 
 def main():
     """Hauptfunktion des Programms."""
@@ -161,19 +166,23 @@ def main():
     
     try:
         while True:
-            # Benutzer zur Eingabe der Spannung auffordern
-            input_voltage = input(f"Gib die gewünschte Spannung in Volt ein (Bereich {DAC_SPAN}V bis 0V) oder 's' für Strombegrenzung, 'q' zum Beenden: ")
+            print("\n--- Menü ---")
+            print(f"Spannung einstellen: {DAC_SPAN}V bis 0V")
+            print("Messung starten: 'm'")
+            print("Beenden: 'q'")
             
-            if input_voltage.lower() == 'q':
+            user_input = input("Gib deine Wahl ein: ")
+            
+            if user_input.lower() == 'q':
                 break
-            elif input_voltage.lower() == 's':
-                strombegrenzung_minus()
+            elif user_input.lower() == 'm':
+                continuous_measurement()
             else:
                 try:
-                    spannung = float(input_voltage)
+                    spannung = float(user_input)
                     set_voltage_minus(spannung)
                 except ValueError:
-                    print("Ungültige Eingabe. Bitte gib eine Zahl oder 'q'/'s' ein.")
+                    print("Ungültige Eingabe. Bitte gib eine Zahl, 'm' oder 'q' ein.")
     except KeyboardInterrupt:
         print("\nProgramm beendet durch Benutzer.")
     finally:
