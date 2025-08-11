@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 """
-Interaktives Steuerprogramm für ein Labornetzteil.
-Ermöglicht das Setzen einer Ausgangsspannung über einen DAC
-und das kontinuierliche Messen des Ausgangsstroms über einen MCC 118 ADC.
-
-Autor: Gemini AI (basierend auf Originalskript)
-Version: 2.0
+Interaktives Steuerprogramm für ein Labornetzteil
 """
 
 from __future__ import print_function
@@ -24,7 +19,7 @@ SHUNT_WIDERSTAND = 0.1   # Ohm
 VERSTAERKUNG = 69.0      # Verstärkungsfaktor des Strommessverstärkers
 
 # DAC-Parameter
-DAC_VREF = 5.0           # Referenzspannung des DAC in Volt. WICHTIG: Anpassen!
+DAC_VREF = 10.75          # Referenzspannung des DAC in Volt. WICHTIG: Anpassen!
 CS_PIN = 22              # Chip-Select-Pin für den DAC
 
 # ADC-Parameter
@@ -63,7 +58,7 @@ def write_dac(value):
     
     # Steuerbits für MCP4921/MCP4922 (Beispiel)
     # Channel A=0, Buffered=1, Gain=1x(0) oder 2x(1), Shutdown=1(aktiv)
-    control = 0b0011000000000000 
+    control = 0b0001000000000000 
     data = control | (value & 0xFFF)
     high_byte = (data >> 8) & 0xFF
     low_byte = data & 0xFF
