@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Interaktives Steuerprogramm für ein Labornetzteil
+Steuerprogramm für Labornetzteil positive Spannung.
 """
 
 from __future__ import print_function
@@ -19,7 +19,7 @@ SHUNT_WIDERSTAND = 0.1   # Ohm
 VERSTAERKUNG = 69.0      # Verstärkungsfaktor des Strommessverstärkers
 
 # DAC-Parameter
-DAC_VREF = 10.75          # Referenzspannung des DAC in Volt. WICHTIG: Anpassen!
+DAC_VREF = 10.75          # Referenzspannung des DAC in Volt.
 CS_PIN = 22              # Chip-Select-Pin für den DAC
 
 # ADC-Parameter
@@ -73,7 +73,7 @@ def strombegrenzung_messen():
     Konfiguriert den MCC 118 und startet die kontinuierliche Strommessung.
     Die Messung läuft, bis der Benutzer Strg+C drückt.
     """
-    channels = [4]  # Kanal 5 (0-indiziert) für die Strommessung
+    channels = [4]  # Kanal 4 für Strommessung
     channel_mask = chan_list_to_mask(channels)
     num_channels = len(channels)
     scan_rate = 1000.0
