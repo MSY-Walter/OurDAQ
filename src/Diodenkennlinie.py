@@ -3,405 +3,297 @@
 Diodenkennlinie Messung
 """
 
-import lgpio
-import spidev
-import time
-import numpy as np
-import matplotlib.pyplot as plt
-import sys
-import signal
+from __future__ import print_function  # Python 2/3 Kompatibilität
+import spidev                          # SPI-Kommunikation mit DAC
+import time                           # Wartezeiten
+import lgpio                          # Moderne GPIO-Steuerung
+import matplotlib.pyplot as plt       # Diagramme erstellen
 
-class DiodenmessungMitLgpio:
-    def __init__(self, gpio_chip=0, cs_dac_pin=8, cs_adc_pin=7):
-        """
-        Initialisierung der Diodenmessung
-        
-        Args:
-            gpio_chip: GPIO Chip Nummer (standardmäßig 0)
-            cs_dac_pin: CS Pin für DAC (standardmäßig Pin 8)  
-            cs_adc_pin: CS Pin für ADC (standardmäßig Pin 7)
-        """
-        self.gpio_chip_num = gpio_chip
-        self.cs_dac_pin = cs_dac_pin
-        self.cs_adc_pin = cs_adc_pin
-        self.gpio_chip = None
-        self.spi_dac = None
-        self.spi_adc = None
-        
-        # Messkonfiguration
-        self.vorwiderstand = 1000.0  # 1kΩ Vorwiderstand in Ohm
-        self.vref_dac = 3.3          # DAC Referenzspannung in V
-        self.vref_adc = 3.3          # ADC Referenzspannung in V
-        self.dac_aufloesung = 4096   # 12-bit DAC
-        self.adc_aufloesung = 4096   # 12-bit ADC
-        
-        # Signal Handler für sauberes Beenden
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
-    
-    def _signal_handler(self, signum, frame):
-        """Signal Handler für sauberes Beenden"""
-        print(f"\nSignal {signum} empfangen. Beende Messung sauber...")
-        self.schliessen()
-        sys.exit(0)
-    
-    def gpio_cleanup_force(self):
-        """Erzwungene GPIO Bereinigung - falls Pins hängen bleiben"""
-        print("Führe GPIO Notfall-Bereinigung durch...")
-        try:
-            # Versuche verschiedene GPIO Chips
-            for chip_num in range(5):
-                try:
-                    temp_handle = lgpio.gpiochip_open(chip_num)
-                    # Versuche beide CS Pins freizugeben
-                    for pin in [self.cs_dac_pin, self.cs_adc_pin]:
-                        try:
-                            lgpio.gpio_free(temp_handle, pin)
-                        except:
-                            pass
-                    lgpio.gpiochip_close(temp_handle)
-                except:
-                    continue
-        except Exception as e:
-            print(f"Warnung bei GPIO Notfall-Bereinigung: {e}")
-    
-    def initialisieren(self):
-        """Hardware initialisieren"""
-        try:
-            print("Initialisiere GPIO und SPI...")
-            
-            # GPIO Notfall-Bereinigung vor Start
-            self.gpio_cleanup_force()
-            time.sleep(0.1)
-            
-            # GPIO Chip öffnen
-            self.gpio_chip = lgpio.gpiochip_open(self.gpio_chip_num)
-            
-            # CS Pins als Output konfigurieren
-            # Versuche erst freizugeben falls bereits belegt
-            for pin in [self.cs_dac_pin, self.cs_adc_pin]:
-                try:
-                    lgpio.gpio_free(self.gpio_chip, pin)
-                except:
-                    pass  # Pin war nicht belegt
-                
-                # Pin als Output konfigurieren
-                lgpio.gpio_claim_output(self.gpio_chip, pin, lgpio.SET_PULL_NONE)
-                lgpio.gpio_write(self.gpio_chip, pin, 1)  # CS initial high
-            
-            # SPI Verbindungen initialisieren
-            self.spi_dac = spidev.SpiDev()
-            self.spi_dac.open(0, 0)  # SPI Bus 0, Device 0 für DAC
-            self.spi_dac.max_speed_hz = 1000000  # 1 MHz
-            self.spi_dac.mode = 0
-            
-            self.spi_adc = spidev.SpiDev()
-            self.spi_adc.open(0, 1)  # SPI Bus 0, Device 1 für ADC
-            self.spi_adc.max_speed_hz = 1000000  # 1 MHz
-            self.spi_adc.mode = 0
-            
-            print("GPIO und SPI erfolgreich initialisiert.")
-            return True
-            
-        except Exception as e:
-            print(f"Fehler bei der Initialisierung: {e}")
-            self.schliessen()
-            return False
-    
-    def dac_schreiben(self, spannung):
-        """
-        Spannung an DAC ausgeben
-        
-        Args:
-            spannung: Ausgangsspannung in Volt (0.0 bis self.vref_dac)
-        """
-        try:
-            # Spannung in DAC Wert umrechnen
-            if spannung < 0:
-                spannung = 0
-            elif spannung > self.vref_dac:
-                spannung = self.vref_dac
-            
-            dac_wert = int((spannung / self.vref_dac) * (self.dac_aufloesung - 1))
-            
-            # MCP4822 Protokoll: 12-bit DAC
-            # Bit 15: /SHDN = 1 (aktiv)
-            # Bit 14: /GA = 1 (1x Verstärkung) 
-            # Bit 13: BUF = 1 (gepuffert)
-            # Bit 12: Kanal A = 0
-            # Bit 11-0: Daten
-            kommando = 0x7000 | (dac_wert & 0x0FFF)
-            
-            # 16-bit Kommando in 2 Bytes aufteilen
-            high_byte = (kommando >> 8) & 0xFF
-            low_byte = kommando & 0xFF
-            
-            # CS low, Daten senden, CS high
-            lgpio.gpio_write(self.gpio_chip, self.cs_dac_pin, 0)
-            time.sleep(0.000001)  # 1µs warten
-            self.spi_dac.xfer2([high_byte, low_byte])
-            time.sleep(0.000001)  # 1µs warten
-            lgpio.gpio_write(self.gpio_chip, self.cs_dac_pin, 1)
-            
-        except Exception as e:
-            print(f"Fehler beim DAC schreiben: {e}")
-    
-    def adc_lesen(self, kanal=0):
-        """
-        Spannung vom ADC lesen
-        
-        Args:
-            kanal: ADC Kanal (0 oder 1)
-            
-        Returns:
-            float: Gemessene Spannung in Volt
-        """
-        try:
-            # MCP3202 Protokoll: 12-bit ADC
-            # Start bit = 1, Single/Diff = 1, Channel = kanal, MSBF = 1
-            if kanal == 0:
-                kommando = 0x68  # 01101000
-            else:
-                kommando = 0x78  # 01111000
-            
-            # CS low, Daten austauschen, CS high
-            lgpio.gpio_write(self.gpio_chip, self.cs_adc_pin, 0)
-            time.sleep(0.000001)  # 1µs warten
-            antwort = self.spi_adc.xfer2([kommando, 0x00, 0x00])
-            time.sleep(0.000001)  # 1µs warten
-            lgpio.gpio_write(self.gpio_chip, self.cs_adc_pin, 1)
-            
-            # 12-bit Wert extrahieren
-            adc_wert = ((antwort[1] & 0x0F) << 8) | antwort[2]
-            
-            # In Spannung umrechnen
-            spannung = (adc_wert / (self.adc_aufloesung - 1)) * self.vref_adc
-            
-            return spannung
-            
-        except Exception as e:
-            print(f"Fehler beim ADC lesen: {e}")
-            return 0.0
-    
-    def mehrfach_messen(self, kanal, anzahl_messungen=10):
-        """
-        Mehrfache ADC Messung für bessere Genauigkeit
-        
-        Args:
-            kanal: ADC Kanal
-            anzahl_messungen: Anzahl der Einzelmessungen
-            
-        Returns:
-            float: Gemittelte Spannung
-        """
-        messungen = []
-        for _ in range(anzahl_messungen):
-            messungen.append(self.adc_lesen(kanal))
-            time.sleep(0.001)  # 1ms zwischen Messungen
-        
-        return np.mean(messungen)
-    
-    def diodenkennlinie_messen(self):
-        """Hauptmessfunktion für Diodenkennlinie"""
-        if not self.initialisieren():
-            return None, None, None
-        
-        try:
-            print("\n=== Diodenkennlinie Messung ===")
-            
-            # Benutzer Parameter abfragen
-            print("Standard-Parameter:")
-            print(f"- Vorwiderstand: {self.vorwiderstand} Ω")
-            print(f"- Maximale DAC Spannung: {self.vref_dac} V")
-            
-            verwende_standard = input("Standard-Parameter verwenden? (j/n): ").lower().strip()
-            
-            if verwende_standard != 'j':
-                try:
-                    self.vorwiderstand = float(input("Vorwiderstand in Ω: "))
-                    max_spannung = float(input(f"Maximale Spannung (0 bis {self.vref_dac}V): "))
-                    max_spannung = min(max_spannung, self.vref_dac)
-                except ValueError:
-                    print("Ungültige Eingabe, verwende Standard-Werte.")
-                    max_spannung = 2.0
-            else:
-                max_spannung = 2.0  # Sichere Maximalspannung für Dioden
-            
-            anzahl_punkte = 50  # Fixe Anzahl für konsistente Messungen
-            
-            print(f"\nStarte Messung mit {anzahl_punkte} Punkten bis {max_spannung}V...")
-            print("Drücke Ctrl+C zum Abbrechen.\n")
-            
-            # Messwerte Arrays
-            eingestellte_spannungen = []
-            diodenspannungen = []
-            stroeme = []
-            
-            # Spannungsschritte berechnen
-            spannungsschritte = np.linspace(0, max_spannung, anzahl_punkte)
-            
-            for i, spannung in enumerate(spannungsschritte):
-                # DAC Spannung einstellen
-                self.dac_schreiben(spannung)
-                time.sleep(0.05)  # 50ms Einschwingzeit
-                
-                # Spannungen messen
-                v_vorwiderstand = self.mehrfach_messen(0, 5)  # Spannung über Vorwiderstand
-                v_diode = self.mehrfach_messen(1, 5)         # Spannung über Diode
-                
-                # Strom berechnen (Ohmsches Gesetz)
-                if v_vorwiderstand > 0:
-                    strom = v_vorwiderstand / self.vorwiderstand
-                else:
-                    strom = 0.0
-                
-                # Daten speichern
-                eingestellte_spannungen.append(spannung)
-                diodenspannungen.append(v_diode)
-                stroeme.append(strom)
-                
-                # Fortschritt anzeigen
-                if i % 5 == 0 or i == anzahl_punkte - 1:
-                    print(f"Punkt {i+1:2d}/{anzahl_punkte}: "
-                          f"U_DAC={spannung:.3f}V, U_Diode={v_diode:.3f}V, "
-                          f"I={strom*1000:.3f}mA")
-            
-            print("\nMessung abgeschlossen. Erstelle Diagramm...")
-            
-            # Ergebnisse plotten
-            self.ergebnisse_plotten(eingestellte_spannungen, diodenspannungen, stroeme, max_spannung)
-            
-            return eingestellte_spannungen, diodenspannungen, stroeme
-            
-        except KeyboardInterrupt:
-            print("\nMessung abgebrochen.")
-            self.dac_schreiben(0)
-        except Exception as e:
-            print(f"Fehler: {e}")
-            self.dac_schreiben(0)
-        finally:
-            self.schliessen()
-    
-    def ergebnisse_plotten(self, eingestellt, diode, strom, max_spannung):
-        """Messergebnisse grafisch darstellen"""
-        plt.figure(figsize=(15, 5))
-        
-        # Subplot 1: Klassische Diodenkennlinie
-        plt.subplot(1, 3, 1)
-        plt.plot(diode, np.array(strom) * 1000, marker='.', markersize=8)
-        plt.xlabel("Spannung über Diode (V)")
-        plt.ylabel("Strom durch Diode (mA)")
-        plt.title("Diodenkennlinie")
-        plt.grid(True, alpha=0.3)
-        plt.xlim(0, max(diode) * 1.1 if diode else 1)
-        
-        # Subplot 2: Eingestellte Spannung vs Strom
-        plt.subplot(1, 3, 2)
-        plt.plot(eingestellt, np.array(strom) * 1000, marker='.', color='orange', markersize=8)
-        plt.xlabel("Eingestellte DAC Spannung (V)")
-        plt.ylabel("Strom durch Diode (mA)")
-        plt.title("DAC Spannung vs. Strom")
-        plt.xlim(0, max_spannung)
-        plt.grid(True, alpha=0.3)
-        
-        # Subplot 3: Logarithmische Darstellung
-        plt.subplot(1, 3, 3)
-        # Nur positive Ströme für Log-Darstellung
-        positive_indices = np.array(strom) > 1e-9  # 1nA Schwelle
-        if np.any(positive_indices):
-            plt.semilogy(np.array(diode)[positive_indices], 
-                        np.array(strom)[positive_indices] * 1000, 
-                        marker='.', color='red', markersize=8)
-            plt.xlabel("Spannung über Diode (V)")
-            plt.ylabel("Strom durch Diode (mA, log)")
-            plt.title("Diodenkennlinie (logarithmisch)")
-            plt.grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        plt.show()
-        
-        # Zusätzliche Analyse ausgeben
-        self.analyse_ausgeben(diode, strom)
-    
-    def analyse_ausgeben(self, spannungen, stroeme):
-        """Zusätzliche Analyse der Diodenkennlinie"""
-        print("\n=== Dioden-Analyse ===")
-        
-        # Durchlassspannung bei verschiedenen Strömen finden
-        stroeme_ma = np.array(stroeme) * 1000
-        spannungen = np.array(spannungen)
-        
-        ziel_stroeme = [0.1, 1.0, 10.0, 20.0]  # mA
-        
-        for ziel_strom in ziel_stroeme:
-            # Nächstgelegenen Strom finden
-            if max(stroeme_ma) >= ziel_strom:
-                idx = np.argmin(np.abs(stroeme_ma - ziel_strom))
-                print(f"Durchlassspannung bei {ziel_strom:4.1f} mA: {spannungen[idx]:.3f} V")
-        
-        # Maximale Werte
-        max_strom_idx = np.argmax(stroeme_ma)
-        print(f"\nMaximaler Strom: {stroeme_ma[max_strom_idx]:.3f} mA bei {spannungen[max_strom_idx]:.3f} V")
-        
-        # Widerstand im linearen Bereich schätzen
-        if len(stroeme) > 5:
-            # Letzte 5 Punkte für Widerstandsberechnung
-            delta_v = spannungen[-1] - spannungen[-5]
-            delta_i = stroeme[-1] - stroeme[-5]
-            if delta_i != 0:
-                dynamischer_widerstand = delta_v / delta_i
-                print(f"Dynamischer Widerstand (letzte 5 Punkte): {dynamischer_widerstand:.1f} Ω")
-    
-    def schliessen(self):
-        """Ressourcen freigeben"""
-        print("Gebe Ressourcen frei...")
-        
-        try:
-            # DAC auf 0 setzen
-            if self.spi_dac:
-                self.dac_schreiben(0)
-        except:
-            pass
-        
-        try:
-            # SPI Verbindungen schließen
-            if self.spi_dac:
-                self.spi_dac.close()
-            if self.spi_adc:
-                self.spi_adc.close()
-        except:
-            pass
-        
-        try:
-            # GPIO Pins freigeben
-            if self.gpio_chip:
-                for pin in [self.cs_dac_pin, self.cs_adc_pin]:
-                    try:
-                        lgpio.gpio_free(self.gpio_chip, pin)
-                    except:
-                        pass
-                
-                # GPIO Chip schließen
-                lgpio.gpiochip_close(self.gpio_chip)
-        except:
-            pass
-        
-        print("Ressourcen erfolgreich freigegeben.")
+from daqhats import mcc118, OptionFlags, HatIDs    # MCC118 Hardware-Bibliothek
+from daqhats_utils import select_hat_device        # Device-Auswahl
 
-def main():
-    """Hauptprogramm"""
-    print("=== Diodenkennlinie Messsystem ===")
-    print("Verwendet lgpio für robuste GPIO Verwaltung")
-    print("Drücke Ctrl+C zum Beenden\n")
+# === DAC Hardware-Parameter ===
+CS_PIN = 22              # GPIO Pin für Chip Select (SPI)
+MAX_DAC_VALUE = 4095     # Maximum DAC-Wert (12-Bit: 2^12 - 1)
+MAX_SPANNUNG = 10.7      # Maximale Ausgangsspannung in Volt
+
+# Auflösung berechnen
+SPANNUNG_PRO_BIT = MAX_SPANNUNG / MAX_DAC_VALUE  # ≈ 2.61 mV pro Bit
+
+gpio_handle = None
+
+def init_hardware():
+    """
+    Hardware-Initialisierung mit lgpio
+    """
+    global gpio_handle
     
-    messgeraet = DiodenmessungMitLgpio()
+    # === lgpio Chip öffnen ===
+    gpio_handle = lgpio.gpiochip_open(0)  # GPIO Chip 0 öffnen
+    if gpio_handle < 0:
+        raise Exception("Fehler beim Öffnen des GPIO Chips")
+    
+    # === CS Pin als Ausgang konfigurieren ===
+    ret = lgpio.gpio_claim_output(gpio_handle, CS_PIN, lgpio.SET_PULL_NONE)
+    if ret < 0:
+        raise Exception(f"Fehler beim Konfigurieren von GPIO Pin {CS_PIN}")
+    
+    # CS initial auf HIGH (inaktiv)
+    lgpio.gpio_write(gpio_handle, CS_PIN, 1)
+    
+    # === SPI-Schnittstelle konfigurieren ===
+    spi = spidev.SpiDev()
+    spi.open(0, 0)              # Bus 0, Device 0
+    spi.max_speed_hz = 1000000  # 1 MHz Übertragungsgeschwindigkeit
+    spi.mode = 0b00             # SPI Mode 0 (CPOL=0, CPHA=0)
+    
+    print("✅ Hardware erfolgreich initialisiert (lgpio)")
+    return spi
+
+def write_dac(spi, value):
+    """
+    Schreibt einen Wert an den DAC (0-4095) mit lgpio
+    
+    Parameter:
+    spi: SPI-Objekt
+    value: DAC-Wert (0 bis 4095)
+    
+    DAC-Register-Aufbau (16 Bit):
+    - Bit 15: Channel Select (0=A, 1=B) 
+    - Bit 14: Buffer Control (1=buffered)
+    - Bit 13: Gain Select (0=2x, 1=1x)
+    - Bit 12: Shutdown (1=active, 0=shutdown)
+    - Bit 11-0: Data (12-Bit DAC-Wert)
+    """
+    global gpio_handle
+    
+    # Eingabe validieren
+    assert 0 <= value <= MAX_DAC_VALUE, f"DAC-Wert muss zwischen 0 und {MAX_DAC_VALUE} liegen!"
+    
+    # === Kontrollbits zusammensetzen ===
+    control = 0
+    control |= 0 << 15  # Channel A auswählen (0)
+    control |= 1 << 14  # Buffered Mode aktivieren (1)
+    control |= 0 << 13  # Gain = 2x für vollen Spannungsbereich (0)
+    control |= 1 << 12  # Normal Operation, nicht Shutdown (1)
+    
+    # === Datenpaket erstellen ===
+    data = control | (value & 0xFFF)  # 12-Bit Daten hinzufügen
+    high_byte = (data >> 8) & 0xFF    # Obere 8 Bit
+    low_byte = data & 0xFF            # Untere 8 Bit
+
+    # Debug-Ausgabe (optional)
+    spannung = (value / MAX_DAC_VALUE) * MAX_SPANNUNG
+    print(f"DAC: {value:4d} → {spannung:.3f}V | SPI: 0x{high_byte:02X}{low_byte:02X}")
+    
+    # === SPI-Übertragung mit lgpio ===
+    lgpio.gpio_write(gpio_handle, CS_PIN, 0)     # Chip Select aktivieren
+    spi.xfer2([high_byte, low_byte])             # 16-Bit Daten senden
+    lgpio.gpio_write(gpio_handle, CS_PIN, 1)     # Chip Select deaktivieren
+
+def cleanup_hardware(spi):
+    """
+    Hardware-Cleanup mit lgpio
+    """
+    global gpio_handle
     
     try:
-        messgeraet.diodenkennlinie_messen()
+        # DAC auf 0V setzen
+        if spi and gpio_handle is not None:
+            write_dac(spi, 0)
+        
+        # SPI schließen
+        if spi:
+            spi.close()
+        
+        # GPIO freigeben und Chip schließen
+        if gpio_handle is not None:
+            lgpio.gpio_free(gpio_handle, CS_PIN)  # Pin freigeben
+            lgpio.gpiochip_close(gpio_handle)     # Chip schließen
+            gpio_handle = None
+            
+        print("🧹 Hardware-Cleanup abgeschlossen (lgpio)")
     except Exception as e:
-        print(f"Unerwarteter Fehler: {e}")
-    finally:
-        messgeraet.schliessen()
+        print(f"⚠️  Cleanup-Fehler: {e}")
 
+def improved_measurement(hat, channel, num_samples=10):
+    """
+    Verbesserte Spannungsmessung mit Mittelwertbildung
+    """
+    samples = []
+    for _ in range(num_samples):
+        samples.append(hat.a_in_read(channel))
+        time.sleep(0.001)  # Kurze Pause zwischen Messungen
+    
+    return sum(samples) / len(samples)  # Mittelwert
+
+def find_threshold(voltages, currents, threshold_current):
+    """Findet Schwellenspannung für gegebenen Strom"""
+    for v, i in zip(voltages, currents):
+        if i >= threshold_current:
+            return v
+    return None
+
+def analyze_diode_curve(voltages, currents):
+    """
+    Erweiterte Analyse der Diodenkennlinie
+    """
+    # Schwellenspannung bestimmen (verschiedene Kriterien)
+    thresholds = {
+        "1mA": find_threshold(voltages, currents, 0.001),
+        "10mA": find_threshold(voltages, currents, 0.010),
+        "1% Max": find_threshold(voltages, currents, max(currents) * 0.01)
+    }
+    
+    return thresholds
+
+def main():
+    """
+    Hauptfunktion für die Diodenkennlinienmessung mit lgpio
+    
+    Ablauf:
+    1. Messparameter vom Benutzer abfragen
+    2. Hardware initialisieren
+    3. Spannungsrampe fahren und dabei messen
+    4. Strom aus Spannung berechnen  
+    5. Kennlinien-Diagramme erstellen
+    """
+    print("=" * 50)
+    print("    DIODENKENNLINIE MESSUNG (lgpio)")
+    print("=" * 50)
+
+    spi = None
+    hat = None
+
+    try:
+        # === Hardware initialisieren ===
+        spi = init_hardware()
+        
+        # === Messparameter eingeben ===
+        print("\n📋 Messparameter eingeben:")
+        r_serie = float(input("Serienwiderstand [Ω] (z.B. 100): "))
+        anzahl_punkte = int(input("Anzahl Messpunkte (mind. 15): "))
+        
+        # Mindestanzahl prüfen
+        if anzahl_punkte < 15:
+            print("⚠️  Mindestens 15 Punkte für aussagekräftige Kennlinie!")
+            anzahl_punkte = 15
+
+        spannung_max = float(input(f"Maximale Spannung [V] (max {MAX_SPANNUNG:.1f}V): "))
+        if spannung_max > MAX_SPANNUNG:
+            print(f"⚠️  Begrenze auf {MAX_SPANNUNG:.1f}V.")
+            spannung_max = MAX_SPANNUNG
+
+        # === MCC118 verbinden ===
+        print("\n🔧 Verbinde MCC118...")
+        address = select_hat_device(HatIDs.MCC_118)
+        hat = mcc118(address)
+        print(f"✅ MCC118 an Adresse {address} verbunden.")
+
+        # === Messreihen vorbereiten ===
+        eingestellte_spannungen = []  # U_DAC (Sollwert)
+        diodenspannungen = []         # U_Diode (gemessen)
+        stroeme = []                  # I_Diode (berechnet)
+
+        print(f"\n📊 Starte Messung: 0V → {spannung_max:.1f}V in {anzahl_punkte} Schritten")
+        print("=" * 80)
+        print("  Nr. |  U_DAC [V] | U_Diode [V] | I_Diode [mA] | DAC-Wert")
+        print("-" * 80)
+        
+        # === Messschleife ===
+        for i in range(anzahl_punkte):
+            # Spannung linear verteilen (0 bis spannung_max)
+            spannung_dac = i * spannung_max / (anzahl_punkte - 1)
+            
+            # DAC-Wert berechnen
+            dac_value = int((spannung_dac / MAX_SPANNUNG) * MAX_DAC_VALUE)
+            
+            # === DAC setzen ===
+            write_dac(spi, dac_value)
+            time.sleep(0.05)  # Einschwingzeit abwarten (wichtig!)
+
+            # === Diodenspannung messen ===
+            spannung_diode = improved_measurement(hat, 7, 5)  # Kanal 7, 5 Samples
+
+            # === Strom berechnen ===
+            strom = (spannung_dac - spannung_diode) / r_serie
+            strom_ma = strom * 1000  # Umrechnung in mA für bessere Lesbarkeit
+
+            # === Daten speichern ===
+            eingestellte_spannungen.append(spannung_dac)
+            diodenspannungen.append(spannung_diode)
+            stroeme.append(strom)
+
+            # === Fortschritt anzeigen ===
+            print(f" {i+1:3d}. | {spannung_dac:8.3f} | {spannung_diode:9.5f} | "
+                  f"{strom_ma:10.3f} | {dac_value:8d}")
+
+        print("\n✅ Messung abgeschlossen!")
+
+        # === Datenanalyse ===
+        print(f"\n📈 Analysiere {len(stroeme)} Datenpunkte...")
+        
+        # Analysiere Kennlinie
+        thresholds = analyze_diode_curve(diodenspannungen, stroeme)
+        
+        print("🔍 Schwellenspannungen:")
+        for criterion, voltage in thresholds.items():
+            if voltage:
+                print(f"   • {criterion}: {voltage:.3f}V")
+            else:
+                print(f"   • {criterion}: nicht erreicht")
+
+        # === Diagramme erstellen ===
+        print("📊 Erstelle Diagramme...")
+        
+        plt.figure(figsize=(14, 6))
+
+        # === Subplot 1: Klassische I-V Kennlinie ===
+        plt.subplot(1, 2, 1)
+        plt.plot(diodenspannungen, [i*1000 for i in stroeme], 'ro-', 
+                linewidth=2, markersize=4, label='Messdaten')
+        plt.xlabel("Diodenspannung U_D [V]", fontsize=11)
+        plt.ylabel("Diodenstrom I_D [mA]", fontsize=11) 
+        plt.title("Diodenkennlinie (I-V)", fontsize=12, fontweight='bold')
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        
+        # Schwellenspannung markieren
+        if thresholds["1mA"]:
+            plt.axvline(thresholds["1mA"], color='orange', linestyle='--', 
+                       label=f'Schwelle (1mA) ≈ {thresholds["1mA"]:.3f}V')
+            plt.legend()
+
+        # === Subplot 2: Eingangs- vs. Ausgangskennlinie ===
+        plt.subplot(1, 2, 2)
+        plt.plot(eingestellte_spannungen, [i*1000 for i in stroeme], 'bo-',
+                linewidth=2, markersize=4, label='I_D(U_DAC)')
+        plt.xlabel("Eingangsspannung U_DAC [V]", fontsize=11)
+        plt.ylabel("Diodenstrom I_D [mA]", fontsize=11)
+        plt.title("Eingangsspannung vs. Strom", fontsize=12, fontweight='bold')
+        plt.xlim(0, spannung_max)
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+
+        plt.tight_layout()
+        plt.show()
+
+        # === Zusammenfassung ausgeben ===
+        max_strom = max(stroeme) * 1000
+        max_spannung = max(diodenspannungen)
+        print(f"\n📋 Messergebnisse:")
+        print(f"   • Maximaler Strom: {max_strom:.2f} mA")
+        print(f"   • Maximale Diodenspannung: {max_spannung:.3f} V")
+        print(f"   • Serienwiderstand: {r_serie:.0f} Ω")
+
+    except KeyboardInterrupt:
+        print("\n⚠️  Messung durch Benutzer abgebrochen.")
+    except Exception as e:
+        print(f"❌ Fehler: {e}")
+    finally:
+        # === Cleanup (immer ausführen!) ===
+        cleanup_hardware(spi)
+
+# === Messung starten ===
 if __name__ == "__main__":
     main()
