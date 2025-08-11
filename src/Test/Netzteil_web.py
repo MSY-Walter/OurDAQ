@@ -45,7 +45,7 @@ try:
             # Wenn select_hat_device auch fehlt, definiere alle Funktionen
             def select_hat_device(hat_id):
                 """Fallback-Funktion für HAT-Geräteauswahl"""
-                return 0  # Standard-Adresse
+                return 0 # Standard-Adresse
                 
             def chan_list_to_string(channels):
                 return ', '.join(map(str, channels))
@@ -88,16 +88,16 @@ if platform.system() == "Windows":
 # =============================================================================
 
 # Hardware-Parameter
-SHUNT_WIDERSTAND = 0.1   # Ohm
-VERSTAERKUNG = 69.0      # Verstärkungsfaktor
-CS_PIN = 22              # Chip Select Pin
-DAC_MAX_VALUE = 4095     # 12-bit DAC
+SHUNT_WIDERSTAND = 0.1     # Ohm
+VERSTAERKUNG = 69.0        # Verstärkungsfaktor
+CS_PIN = 22                # Chip Select Pin
+DAC_MAX_VALUE = 4095       # 12-bit DAC
 VOLTAGE_REFERENCE = 10.0  # Referenzspannung in Volt (für +10V bis -10V)
 
 # Mess-Parameter
-SAMPLE_RATE = 1000.0     # Hz
-BUFFER_SIZE = 1000       # Anzahl der zu speichernden Messpunkte
-UPDATE_INTERVAL = 100    # ms
+SAMPLE_RATE = 1000.0       # Hz
+BUFFER_SIZE = 1000         # Anzahl der zu speichernden Messpunkte
+UPDATE_INTERVAL = 100      # ms
 
 # =============================================================================
 # NETZTEIL CONTROLLER KLASSE
@@ -105,7 +105,7 @@ UPDATE_INTERVAL = 100    # ms
 
 class NetzteilController:
     def __init__(self, simulation_mode=False):
-        self.simulation_mode = simulation_mode or not HARDWARE_AVAILABLE or platform.system() == "Windows"
+        self.simulation_mode = simulation_mode
         self.running = False
         self.current_voltage = 0
         self.measured_current = 0
@@ -162,7 +162,7 @@ class NetzteilController:
             
     def write_dac_channel(self, value):
         """Schreibt Wert an DAC-Kanal"""
-        if self.simulation_mode or not HARDWARE_AVAILABLE:
+        if self.simulation_mode:
             # Simulation
             voltage = ((value / DAC_MAX_VALUE) * (2 * VOLTAGE_REFERENCE)) - VOLTAGE_REFERENCE
             self.current_voltage = voltage
@@ -208,7 +208,7 @@ class NetzteilController:
         
     def read_current(self):
         """Liest Strom über MCC 118 Kanal 5"""
-        if self.simulation_mode or not HARDWARE_AVAILABLE or not self.hat:
+        if self.simulation_mode or not self.hat:
             # Simuliere Strom basierend auf Spannung (Ohm'sches Gesetz)
             total_voltage = abs(self.current_voltage)
             simulated_current = total_voltage / 10.0  # Annahme: 10 Ohm Last
@@ -302,7 +302,9 @@ netzteil = None
 def create_app(simulation_mode=False):
     global netzteil
     
-    netzteil = NetzteilController(simulation_mode)
+    # Neue Logik: Simulation wird nur aktiviert, wenn explizit gefordert oder wenn Hardware nicht verfügbar ist
+    run_simulation_mode = simulation_mode or not HARDWARE_AVAILABLE
+    netzteil = NetzteilController(run_simulation_mode)
     netzteil.start_monitoring()
     
     # App mit suppress_callback_exceptions=True für bessere iframe-Kompatibilität
@@ -677,20 +679,30 @@ def create_app(simulation_mode=False):
 def main():
     parser = argparse.ArgumentParser(description='OurDAQ Netzteil Web Interface')
     parser.add_argument('--simulate', action='store_true', help='Simulationsmodus aktivieren')
+    parser.add_argument('--force-hardware', action='store_true', help='Erzwinge Hardware-Modus, ignoriert System-Checks')
     parser.add_argument('--host', default='0.0.0.0', help='Host-Adresse')
     parser.add_argument('--port', type=int, default=8072, help='Port')
     parser.add_argument('--debug', action='store_true', help='Debug-Modus')
     
     args = parser.parse_args()
     
+    # Bestimme den endgültigen Simulationsmodus
+    # Wenn 'force-hardware' gesetzt ist, wird der Simulationsmodus nur dann aktiviert,
+    # wenn die Hardware-Module nicht importiert werden konnten.
+    # Ansonsten gilt die ursprüngliche Logik (simulieren, wenn keine Hardware oder Windows)
+    if args.force_hardware:
+        simulation_mode = not HARDWARE_AVAILABLE
+    else:
+        simulation_mode = args.simulate or not HARDWARE_AVAILABLE or platform.system() == "Windows"
+    
     print("=" * 60)
     print("⚡ OurDAQ Netzteil Web Interface")
     print("=" * 60)
-    print(f"🎭 Simulation Mode: {'EIN' if args.simulate else 'AUS'}")
+    print(f"🎭 Simulation Mode: {'EIN' if simulation_mode else 'AUS'}")
     print(f"🌐 URL: http://{args.host}:{args.port}")
     print("=" * 60)
     
-    app = create_app(simulation_mode=args.simulate)
+    app = create_app(simulation_mode=simulation_mode)
     
     try:
         app.run(host=args.host, port=args.port, debug=args.debug)
