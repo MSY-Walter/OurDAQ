@@ -88,7 +88,7 @@ def write_dac_minus(value):
 
 def set_voltage_minus(voltage):
     """
-    Stellt die Spannung auf der Minus-Seite ein und gibt die aktuellen Messwerte aus.
+    Stellt die Spannung auf der Minus-Seite ein.
     
     :param voltage: Die gewünschte Spannung in Volt (-10.75 bis 0).
     """
@@ -96,6 +96,8 @@ def set_voltage_minus(voltage):
         print(f"Ungültige Spannung: {voltage:.2f} V. Der gültige Bereich ist {DAC_SPAN:.2f}V bis 0V.")
         return
     
+    # Korrigierte lineare Skalierung: 0V -> 4095, -10.75V -> 0
+    # Die Formel wird invertiert, da die Spannung von -10.75V zu 0V den DAC-Wert von 0 zu 4095 erhöht.
     dac_value = int(round((voltage / DAC_SPAN) * MAX_DAC_VALUE))
     
     if dac_value < 0: dac_value = 0
@@ -103,31 +105,61 @@ def set_voltage_minus(voltage):
     
     write_dac_minus(dac_value)
     
-    # Warte kurz, damit sich die Spannung stabilisiert
-    time.sleep(0.1)
-    
-    # Führe eine einmalige Messung durch
+    # Geben Sie die tatsächlich eingestellte Spannung aus, um die Abweichung zu zeigen
+    actual_voltage = (dac_value / MAX_DAC_VALUE) * DAC_SPAN
+    print(f"Spannung eingestellt: Wunsch = {voltage:.2f} V, DAC-Wert = {dac_value}, Ist = {actual_voltage:.2f} V")
+
+def continuous_measurement():
+    """Führt die kontinuierliche Strommessung und -ausgabe durch."""
+    channels = [4]
+    channel_mask = chan_list_to_mask(channels)
+    num_channels = len(channels)
+    scan_rate = 1000.0
+    options = OptionFlags.CONTINUOUS
+
     try:
-        channels = [4]
-        channel_mask = chan_list_to_mask(channels)
-        hat.a_in_scan_start(channel_mask, 1, 1000.0, OptionFlags.SINGLE_ENDED)
-        read_result = hat.a_in_scan_read(1, 1.0)
+        actual_scan_rate = hat.a_in_scan_actual_rate(num_channels, scan_rate)
         
-        if len(read_result.data) > 0:
-            voltage_measured = read_result.data[0]
+        print('\nStarte Messung...')
+        print('    Scan-Rate (tatsächlich): ', actual_scan_rate, 'Hz')
+        
+        hat.a_in_scan_scan_start(channel_mask, 0, scan_rate, options)
+        print('\nMessung läuft... (Strg+C zum Beenden)\n')
+        
+        # Header für die Live-Anzeige
+        print(f'{"Spannung [V]":<20} {"Strom [A]":<20}')
+        
+        read_request_size = -1
+        timeout = 5.0
+        
+        while hat.status().running:
+            read_result = hat.a_in_scan_read(read_request_size, timeout)
+            
+            if read_result.hardware_overrun or read_result.buffer_overrun:
+                print('\n\nÜberlauf erkannt. Messung stoppt.\n')
+                break
+                
+            samples_read_per_channel = len(read_result.data) // num_channels
+            if samples_read_per_channel == 0:
+                continue
+
+            index = (samples_read_per_channel * num_channels) - num_channels
+
+            voltage_measured = read_result.data[index]
             current_calculated = -voltage_measured / (VERSTAERKUNG * SHUNT_WIDERSTAND)
             
-            print(f"Spannung eingestellt: {voltage:.2f} V")
-            print(f"Gemessene Werte: Spannung = {voltage_measured:.5f} V | Strom = {current_calculated:.5f} A")
-        else:
-            print("Spannung eingestellt, aber keine Messdaten empfangen.")
+            # Ausgabe auf einer Zeile, die ständig aktualisiert wird
+            print(f'\r{voltage_measured:<20.5f} {current_calculated:<20.5f}', end='', flush=True)
 
     except HatError as err:
-        print(f"Fehler bei der Messung: {err}")
+        print(f'\nFehler: {err}')
+    except KeyboardInterrupt:
+        print("\nMessung beendet durch Benutzer.")
     finally:
         if hat and hat.status().running:
             hat.a_in_scan_stop()
             hat.a_in_scan_cleanup()
+
 
 def main():
     """Hauptfunktion des Programms."""
@@ -137,18 +169,21 @@ def main():
         while True:
             print("\n--- Menü ---")
             print(f"Spannung einstellen (z.B. -5.0): {DAC_SPAN:.2f}V bis 0V")
+            print("Messung starten: 'm'")
             print("Beenden: 'q'")
             
             user_input = input("Gib deine Wahl ein: ")
             
             if user_input.lower() == 'q':
                 break
+            elif user_input.lower() == 'm':
+                continuous_measurement()
             else:
                 try:
                     spannung = float(user_input)
                     set_voltage_minus(spannung)
                 except ValueError:
-                    print("Ungültige Eingabe. Bitte gib eine Zahl oder 'q' ein.")
+                    print("Ungültige Eingabe. Bitte gib eine Zahl, 'm' oder 'q' ein.")
     except KeyboardInterrupt:
         print("\nProgramm beendet durch Benutzer.")
     finally:
