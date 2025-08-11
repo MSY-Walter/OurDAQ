@@ -62,7 +62,7 @@ def strombegrenzung():
     Umrechnen von Spannung → Strom: I = U / (Verstärkung * R_shunt)
     """
 
-    channels = [5]  # Nur Kanal 5 aktiv
+    channels = [4]  # Nur Kanal 5 aktiv
     channel_mask = chan_list_to_mask(channels)
     num_channels = len(channels)
 
@@ -166,7 +166,7 @@ while True:
 
 def main():
     time.sleep(1)
-    write_dac(3000)
+    write_dac(4095)
     
     while True:
         strombegrenzung()
