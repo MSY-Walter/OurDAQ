@@ -14,7 +14,6 @@ from daqhats import mcc118, OptionFlags, HatIDs, HatError
 from daqhats_utils import select_hat_device, chan_list_to_mask
 
 # --- Globale Konstanten und Variablen ---
-READ_ALL_AVAILABLE = -1
 SHUNT_WIDERSTAND = 0.1      # Ohm
 VERSTAERKUNG = 69.0         # Verstärkungsfaktor
 CS_PIN = 22
@@ -83,8 +82,6 @@ def write_dac_minus(value):
     high_byte = (data >> 8) & 0xFF
     low_byte = data & 0xFF
     
-    # print(f"Sende SPI DAC-Wert {value} für {-10.75 * (1 - value/MAX_DAC_VALUE):.2f} V")
-    
     lgpio.gpio_write(gpio_handle, CS_PIN, 0)
     spi.xfer2([high_byte, low_byte])
     lgpio.gpio_write(gpio_handle, CS_PIN, 1)
@@ -96,13 +93,21 @@ def set_voltage_minus(voltage):
     :param voltage: Die gewünschte Spannung in Volt (-10.75 bis 0).
     """
     if not (DAC_SPAN <= voltage <= 0):
-        print(f"Ungültige Spannung: {voltage} V. Der gültige Bereich ist {DAC_SPAN}V bis 0V.")
+        print(f"Ungültige Spannung: {voltage:.2f} V. Der gültige Bereich ist {DAC_SPAN:.2f}V bis 0V.")
         return
-        
-    dac_value = int((1 - (voltage / DAC_SPAN)) * MAX_DAC_VALUE)
+    
+    # Korrigierte lineare Skalierung: 0V -> 4095, -10.75V -> 0
+    # Die Formel wird invertiert, da die Spannung von -10.75V zu 0V den DAC-Wert von 0 zu 4095 erhöht.
+    dac_value = int(round((voltage / DAC_SPAN) * MAX_DAC_VALUE))
+    
+    if dac_value < 0: dac_value = 0
+    if dac_value > MAX_DAC_VALUE: dac_value = MAX_DAC_VALUE
+    
     write_dac_minus(dac_value)
-    print(f"Spannung auf {voltage:.2f} V eingestellt.")
-
+    
+    # Geben Sie die tatsächlich eingestellte Spannung aus, um die Abweichung zu zeigen
+    actual_voltage = (dac_value / MAX_DAC_VALUE) * DAC_SPAN
+    print(f"Spannung eingestellt: Wunsch = {voltage:.2f} V, DAC-Wert = {dac_value}, Ist = {actual_voltage:.2f} V")
 
 def continuous_measurement():
     """Führt die kontinuierliche Strommessung und -ausgabe durch."""
@@ -118,16 +123,15 @@ def continuous_measurement():
         print('\nStarte Messung...')
         print('    Scan-Rate (tatsächlich): ', actual_scan_rate, 'Hz')
         
-        hat.a_in_scan_start(channel_mask, 0, scan_rate, options)
-        print('\nMessung läuft ... (Strg+C zum Beenden)\n')
-        
-        total_samples_read = 0
-        read_request_size = READ_ALL_AVAILABLE
-        timeout = 5.0
+        hat.a_in_scan_scan_start(channel_mask, 0, scan_rate, options)
+        print('\nMessung läuft... (Strg+C zum Beenden)\n')
         
         # Header für die Live-Anzeige
-        print(f'{"Spannung [V]":<20} {"Strom [A]":<20}', end='')
-
+        print(f'{"Spannung [V]":<20} {"Strom [A]":<20}')
+        
+        read_request_size = -1
+        timeout = 5.0
+        
         while hat.status().running:
             read_result = hat.a_in_scan_read(read_request_size, timeout)
             
@@ -139,23 +143,20 @@ def continuous_measurement():
             if samples_read_per_channel == 0:
                 continue
 
-            total_samples_read += samples_read_per_channel
             index = (samples_read_per_channel * num_channels) - num_channels
 
-            voltage = read_result.data[index]
-            current = -voltage / (VERSTAERKUNG * SHUNT_WIDERSTAND)
+            voltage_measured = read_result.data[index]
+            current_calculated = -voltage_measured / (VERSTAERKUNG * SHUNT_WIDERSTAND)
             
             # Ausgabe auf einer Zeile, die ständig aktualisiert wird
-            print(f'\r{voltage:<20.5f} {current:<20.5f}', end='', flush=True)
+            print(f'\r{voltage_measured:<20.5f} {current_calculated:<20.5f}', end='', flush=True)
 
-            time.sleep(0.1)
-
-    except (HatError, ValueError) as err:
+    except HatError as err:
         print(f'\nFehler: {err}')
     except KeyboardInterrupt:
         print("\nMessung beendet durch Benutzer.")
     finally:
-        if hat.status().running:
+        if hat and hat.status().running:
             hat.a_in_scan_stop()
             hat.a_in_scan_cleanup()
 
@@ -167,7 +168,7 @@ def main():
     try:
         while True:
             print("\n--- Menü ---")
-            print(f"Spannung einstellen: {DAC_SPAN}V bis 0V")
+            print(f"Spannung einstellen (z.B. -5.0): {DAC_SPAN:.2f}V bis 0V")
             print("Messung starten: 'm'")
             print("Beenden: 'q'")
             
