@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Netzteil Plus Seite: Strombegrenzung und DAC Steuerung
+(Angepasste Version, die eine direkte Spannungseingabe ermöglicht)
 """
 
 from __future__ import print_function
@@ -12,6 +13,12 @@ from sys import stdout
 from daqhats import mcc118, OptionFlags, HatIDs, HatError
 from daqhats_utils import select_hat_device, enum_mask_to_string, \
     chan_list_to_mask
+
+# --- WICHTIGE HARDWARE-PARAMETER (BITTE ANPASSEN) ---
+# Hier die Referenzspannung des DAC-Chips eintragen!
+V_REF_SPANNUNG = 2.5  # V
+DAC_GAIN = 2.0  # Gemäß der Einstellung in write_dac (0 << 13 bedeutet Gain=2x)
+MAX_SPANNUNG = V_REF_SPANNUNG * DAC_GAIN # Maximal einstellbare Spannung
 
 # --- Globale Parameter und Initialisierung ---
 READ_ALL_AVAILABLE = -1
@@ -34,24 +41,34 @@ lgpio.gpio_write(gpio_handle, CS_PIN, 1) # CS Pin standardmäßig hoch (inaktiv)
 
 def write_dac(value):
     """Sendet einen 12-Bit-Wert an den DAC über SPI."""
-    assert 0 <= value <= 4095
+    value = int(round(value))
+    value = max(0, min(4095, value)) # Sicherstellen, dass der Wert im Bereich liegt
     
     control = 0
-    control |= 0 << 15 # Channel A=0 oder B=1
-    control |= 1 << 14
+    control |= 0 << 15 # Channel A
+    control |= 1 << 14 # Buffered output
     control |= 0 << 13 # Gain 0=2x
-    control |= 1 << 12
+    control |= 1 << 12 # Activate output
     data = control | (value & 0xFFF)
     high_byte = (data >> 8) & 0xFF
     low_byte = data & 0xFF
-    
-    # print(f"Sende SPI: {data:016b} (0x{high_byte:02X} {low_byte:02X})")
     
     lgpio.gpio_write(gpio_handle, CS_PIN, 0)
     spi.xfer2([high_byte, low_byte])
     lgpio.gpio_write(gpio_handle, CS_PIN, 1)
 
+def spannung_zu_dac_wert(spannung):
+    """Rechnet eine gewünschte Spannung in einen 12-Bit DAC-Wert um."""
+    if spannung > MAX_SPANNUNG:
+        print(f"Warnung: Angeforderte Spannung {spannung:.3f}V ist höher als das Maximum von {MAX_SPANNUNG:.3f}V. Begrenze auf Maximum.")
+        spannung = MAX_SPANNUNG
+    if spannung < 0:
+        spannung = 0
+        
+    dac_wert = (spannung / MAX_SPANNUNG) * 4095
+    return dac_wert
 
+# ... (Die Funktionen strombegrenzung und read_and_display_data bleiben unverändert) ...
 def strombegrenzung():
     """Konfiguriert und startet die kontinuierliche Strommessung mit dem MCC 118."""
     channels = [4]
@@ -101,11 +118,9 @@ def read_and_display_data(hat, num_channels):
 
         samples_read = len(read_result.data)
         if samples_read > 0:
-            # Nur den letzten Messwert anzeigen für eine saubere Ausgabe
             last_voltage = read_result.data[-1]
             current = last_voltage / (VERSTAERKUNG * SHUNT_WIDERSTAND)
             
-            # \r (Carriage Return) bewegt den Cursor an den Zeilenanfang
             print(f'\r{last_voltage:10.5f} V    {current:10.5f} A', end='')
             stdout.flush()
         
@@ -113,30 +128,33 @@ def read_and_display_data(hat, num_channels):
 
 
 def main():
-    """Hauptprogramm: Fragt nach dem DAC-Wert und startet die Überwachung."""
+    """Hauptprogramm: Fragt nach der Spannung und startet die Überwachung."""
     try:
-        # Benutzer nach dem gewünschten DAC-Wert fragen
+        # Benutzer nach der gewünschten Spannung fragen
         while True:
             try:
                 # Hier die Frage auf Deutsch, wie im Originalcode-Stil
-                prompt = "Bitte gewünschten DAC-Wert eingeben (0-4095), oder 'q' zum Beenden: "
+                prompt = f"Bitte gewünschte Spannung eingeben (0.0 - {MAX_SPANNUNG:.3f} V), oder 'q' zum Beenden: "
                 user_input = input(prompt)
                 
                 if user_input.lower() == 'q':
                     print("Programm wird beendet.")
                     return
 
-                dac_value = int(user_input)
-                if 0 <= dac_value <= 4095:
+                gewuenschte_spannung = float(user_input)
+                if 0.0 <= gewuenschte_spannung <= MAX_SPANNUNG:
                     break  # Gültiger Wert, Schleife verlassen
                 else:
-                    print("Fehler: Der Wert muss zwischen 0 und 4095 liegen.")
+                    print(f"Fehler: Der Wert muss zwischen 0.0 und {MAX_SPANNUNG:.3f} liegen.")
             except ValueError:
-                print("Fehler: Bitte eine gültige Ganzzahl eingeben.")
+                print("Fehler: Bitte eine gültige Zahl eingeben (z.B. '3.3').")
         
-        # DAC auf den vom Benutzer gewählten Wert einstellen
-        print(f"\nStelle DAC auf {dac_value} ein...")
-        write_dac(dac_value)
+        # Spannung in DAC-Wert umrechnen
+        dac_wert = spannung_zu_dac_wert(gewuenschte_spannung)
+        
+        # DAC auf den berechneten Wert einstellen
+        print(f"\nStelle Spannung auf {gewuenschte_spannung:.3f}V ein (entspricht DAC-Wert ~{dac_wert:.0f})...")
+        write_dac(dac_wert)
         
         # Dauerhafte Strommessung starten
         strombegrenzung()
