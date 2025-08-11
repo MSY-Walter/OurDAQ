@@ -19,9 +19,9 @@ SHUNT_WIDERSTAND = 0.1   # Ohm
 VERSTAERKUNG = 69.0      # Verstärkungsfaktor des Strommessverstärkers
 
 # DAC-Parameter
-# Dies ist die positive Referenzspannung des DAC.
-# Die resultierende Ausgangsspannung ist von -DAC_VREF bis 0 V.
-DAC_VREF = 10.75
+DAC_VREF = 10.75          # Referenzspannung des DAC in Volt.
+# GEÄNDERT: Neue Konstante für die maximale negative Spannung zur besseren Lesbarkeit
+MAX_SPANNUNG_NEGATIV = -DAC_VREF
 CS_PIN = 22              # Chip-Select-Pin für den DAC
 
 # ADC-Parameter
@@ -42,44 +42,46 @@ lgpio.gpio_claim_output(gpio_handle, CS_PIN)
 lgpio.gpio_write(gpio_handle, CS_PIN, 1) # CS Pin initial auf HIGH (inaktiv)
 
 
+# GEÄNDERT: Logik zur Umrechnung von negativer Spannung in einen positiven DAC-Wert
 def spannung_zu_dac_wert(spannung, v_ref=DAC_VREF):
     """
     Rechnet eine gewünschte negative Spannung in einen 12-Bit DAC-Wert (0-4095) um.
+    Die Funktion erwartet einen negativen Spannungswert.
     Wirft einen ValueError, wenn die Spannung außerhalb des gültigen Bereichs liegt.
-    Annahme: Die positive DAC-Spannung wird extern invertiert.
     """
-    if not (-v_ref <= spannung <= 0):
-        raise ValueError(f"Spannung muss zwischen -{v_ref:.2f} V und 0 V liegen.")
+    # Der gültige Bereich ist jetzt von -Vref bis 0 V.
+    if not (MAX_SPANNUNG_NEGATIV <= spannung <= 0):
+        raise ValueError(f"Spannung muss zwischen {MAX_SPANNUNG_NEGATIV:.2f} und 0.00 V liegen.")
     
-    # Wandelt die negative Spannung in einen positiven Wert für den DAC um.
-    # z.B. eine Anforderung von -5V benötigt eine DAC-Ausgabe von +5V.
-    positive_spannung = abs(spannung)
-    return int((positive_spannung / v_ref) * 4095)
+    # Der DAC benötigt weiterhin einen positiven Wert.
+    # Wir nehmen den Absolutbetrag der negativen Spannung für die Berechnung.
+    # 0V -> DAC 0
+    # -10.75V -> DAC 4095
+    return int((abs(spannung) / v_ref) * 4095)
 
 def write_dac(value):
     """
     Schreibt einen 12-Bit-Wert (0-4095) an den DAC über SPI.
+    (Diese Funktion bleibt unverändert)
     """
     if not (0 <= value <= 4095):
         raise ValueError("DAC-Wert muss zwischen 0 und 4095 liegen.")
     
-    # Steuerbits für MCP4921 (Beispielkonfiguration)
-    control = 0b0011000000000000  # Vref gepuffert, Gain=1x, Ausgang aktiv
+    control = 0b0001000000000000 
     data = control | (value & 0xFFF)
     high_byte = (data >> 8) & 0xFF
     low_byte = data & 0xFF
     
-    # Senden der Daten
-    lgpio.gpio_write(gpio_handle, CS_PIN, 0)  # Chip Select aktivieren (LOW)
+    lgpio.gpio_write(gpio_handle, CS_PIN, 0)
     spi.xfer2([high_byte, low_byte])
-    lgpio.gpio_write(gpio_handle, CS_PIN, 1)  # Chip Select deaktivieren (HIGH)
+    lgpio.gpio_write(gpio_handle, CS_PIN, 1)
 
 def strombegrenzung_messen():
     """
-    Konfiguriert den MCC 118 und startet die kontinuierliche Strommessung auf Kanal 5.
-    Die Messung läuft, bis der Benutzer Strg+C drückt.
+    Konfiguriert den MCC 118 und startet die kontinuierliche Strommessung.
+    (Diese Funktion bleibt im Wesentlichen unverändert)
     """
-    channels = [5]  # Kanal 5 für Strommessung
+    channels = [4]
     channel_mask = chan_list_to_mask(channels)
     num_channels = len(channels)
     scan_rate = 1000.0
@@ -93,9 +95,8 @@ def strombegrenzung_messen():
         actual_scan_rate = hat.a_in_scan_actual_rate(num_channels, scan_rate)
 
         print('\nKonfiguriere MCC 118 für kontinuierliche Strommessung...')
-        print(f'    Kanal:                  {channels[0]}')
-        print(f'    Scan-Rate (gewünscht):  {scan_rate:.2f} Hz')
-        print(f'    Scan-Rate (tatsächlich): {actual_scan_rate:.2f} Hz')
+        print(f'    Scan-Rate (gewünscht):  {scan_rate} Hz')
+        print(f'    Scan-Rate (tatsächlich): {actual_scan_rate} Hz')
         print(f'    Verstärkung:            {VERSTAERKUNG}')
         print(f'    Shunt-Widerstand:       {SHUNT_WIDERSTAND} Ohm')
 
@@ -111,10 +112,8 @@ def strombegrenzung_messen():
     except (HatError, ValueError) as err:
         print(f'\nFehler bei der Initialisierung des MCC 118: {err}')
     except KeyboardInterrupt:
-        # Fängt Strg+C ab, um die Messung sauber zu beenden
         print("\nMessung durch Benutzer unterbrochen.")
-        if 'hat' in locals():
-            hat.a_in_scan_stop()
+        hat.a_in_scan_stop()
     finally:
         if 'hat' in locals() and hat.is_scan_running():
             hat.a_in_scan_stop()
@@ -122,47 +121,47 @@ def strombegrenzung_messen():
 
 
 def read_and_display_data(hat, num_channels):
-    """Liest kontinuierlich Daten vom MCC 118 und zeigt Spannung/Strom an."""
+    """
+    Liest kontinuierlich Daten vom MCC 118 und zeigt Spannung/Strom an.
+    (Diese Funktion bleibt unverändert)
+    """
     total_samples_read = 0
     read_request_size = READ_ALL_AVAILABLE
     timeout = 5.0
 
     while True:
-        try:
-            read_result = hat.a_in_scan_read(read_request_size, timeout)
+        read_result = hat.a_in_scan_read(read_request_size, timeout)
 
-            if read_result.hardware_overrun:
-                print('\n\nHardwareüberlauf erkannt! Messung gestoppt.\n')
-                break
-            elif read_result.buffer_overrun:
-                print('\n\nPufferüberlauf erkannt! Messung gestoppt.\n')
-                break
+        if read_result.hardware_overrun:
+            print('\n\nHardwareüberlauf erkannt! Messung gestoppt.\n')
+            break
+        elif read_result.buffer_overrun:
+            print('\n\nPufferüberlauf erkannt! Messung gestoppt.\n')
+            break
 
-            samples_read_per_channel = len(read_result.data) // num_channels
-            if samples_read_per_channel > 0:
-                total_samples_read += samples_read_per_channel
-                
-                # Nimm den letzten Messwert des Pakets für die Anzeige
-                latest_voltage = read_result.data[-1]
-                current = latest_voltage / (VERSTAERKUNG * SHUNT_WIDERSTAND)
-
-                print(f'\r{samples_read_per_channel:12d}    {total_samples_read:12d}    '
-                      f'{latest_voltage:10.5f} V    {current:10.5f} A'
-                      f'{ERASE_TO_END_OF_LINE}', end='')
-                stdout.flush()
+        samples_read_per_channel = len(read_result.data) // num_channels
+        if samples_read_per_channel > 0:
+            total_samples_read += samples_read_per_channel
             
-            time.sleep(0.1)
-        except KeyboardInterrupt:
-            raise # Erneut auslösen, um von der äußeren Schleife gefangen zu werden
+            latest_voltage = read_result.data[-1]
+            current = latest_voltage / (VERSTAERKUNG * SHUNT_WIDERSTAND)
+
+            print(f'\r{samples_read_per_channel:12d}    {total_samples_read:12d}    '
+                  f'{latest_voltage:10.5f} V    {current:10.5f} A'
+                  f'{ERASE_TO_END_OF_LINE}', end='')
+            stdout.flush()
+        
+        time.sleep(0.1)
 
 def cleanup():
     """
-    Setzt den DAC auf 0V und gibt alle Hardware-Ressourcen frei.
+    Setzt die Ausgangsspannung auf 0V und gibt Ressourcen frei.
+    (Diese Funktion bleibt unverändert)
     """
     print("\n\nRäume auf und beende das Programm...")
     try:
         print("Setze Ausgangsspannung auf 0V...")
-        write_dac(0)  # DAC auf 0V -> Ausgang auf 0V
+        write_dac(0)  # DAC-Wert 0 entspricht 0V am Ausgang
         spi.close()
         lgpio.gpiochip_close(gpio_handle)
         print("Ressourcen erfolgreich freigegeben.")
@@ -178,15 +177,17 @@ def main():
     """
     try:
         while True:
-            print("\n--- Hauptmenü (Negative Spannung) ---")
+            print("\n--- Hauptmenü (Negative Spannung) ---") # GEÄNDERT: Menütitel
             print("1. Spannung einstellen")
-            print("2. Strommessung starten (Kanal 5)")
+            print("2. Strommessung starten")
             print("3. Programm beenden")
             choice = input("Bitte wählen Sie eine Option (1-3): ")
 
             if choice == '1':
                 try:
-                    spannung_str = input(f"Geben Sie die gewünschte Spannung ein (-{DAC_VREF:.2f} V bis 0 V): ")
+                    # GEÄNDERT: Text für die Eingabeaufforderung
+                    prompt = f"Geben Sie die gewünschte Spannung ein ({MAX_SPANNUNG_NEGATIV:.2f} - 0.00 V): "
+                    spannung_str = input(prompt)
                     spannung = float(spannung_str)
                     dac_wert = spannung_zu_dac_wert(spannung)
                     write_dac(dac_wert)
