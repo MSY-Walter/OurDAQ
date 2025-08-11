@@ -13,7 +13,7 @@ from daqhats_utils import select_hat_device
 
 CS_PIN = 22
 MAX_DAC_VALUE = 4095
-MAX_SPANNUNG = 10.5  # Volt (für DAC-Wert 4095)
+MAX_SPANNUNG = 10.9  # Volt (für DAC-Wert 4095)
 
 gpio_handle = None
 
