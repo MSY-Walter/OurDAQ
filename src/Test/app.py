@@ -1,547 +1,504 @@
-
 #!/usr/bin/env python3
-
 """
-Combined web interface for both positive and negative power supply controls.
-Integrates logic from Netzteil_plus.py and Netzteil_minus.py exactly, but exposes via Flask API and SocketIO for real-time.
-Everything in a single file.
+Web-Steuerprogramm für Labornetzteil.
+Bietet eine Flask-Weboberfläche zur Einstellung der Spannung und
+zur Überwachung des Stroms.
 """
 
+from flask import Flask, render_template_string, request, jsonify
 import spidev
 import time
 import lgpio
+import numpy as np
 from sys import stdout
 from daqhats import mcc118, OptionFlags, HatIDs, HatError
 from daqhats_utils import select_hat_device, chan_list_to_mask
-from flask import Flask, request, jsonify, render_template_string
-from flask_socketio import SocketIO, emit
 import threading
-import queue
-import numpy as np
-import json
+from datetime import datetime
 
-app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
-
-# Shared constants
+# ----------------- Globale Konstanten -----------------
 SHUNT_WIDERSTAND = 0.1      # Ohm
 VERSTAERKUNG = 69.0         # Verstärkungsfaktor Stromverstärker
+DAC_VREF = 10.75            # Referenzspannung DAC (V)
 CS_PIN = 22                 # Chip Select Pin
 READ_ALL_AVAILABLE = -1
 
-# Hardware initialization (shared)
-spi = spidev.SpiDev()
-spi.open(0, 0)
-spi.max_speed_hz = 1000000
-spi.mode = 0b00
+MAX_STROM_MA = 500.0        # Überstromschutz (mA)
+MAX_SPANNUNG_NEGATIV = -10  # minimaler Wert für negative Spannung
 
-gpio_handle = lgpio.gpiochip_open(0)
-lgpio.gpio_claim_output(gpio_handle, CS_PIN)
-lgpio.gpio_write(gpio_handle, CS_PIN, 1)  # CS inaktiv (HIGH)
+# ----------------- Globale Zustandsvariablen -----------------
+current_mode = 'positive'   # 'positive' oder 'negative'
+kalibrier_tabelle = []      # Liste von (spannung_in_v, dac_wert)
+corr_a = 0.0
+corr_b = 0.0
+spi = None
+gpio_handle = -1
+hat = None
+monitoring_active = False
+monitoring_thread = None
+dac_value = 0
+current_voltage = 0.0
+current_current_ma = 0.0
+last_error = ""
+calibration_log = []
 
-# ----------------- Plus Power Supply -----------------
+app = Flask(__name__)
 
-class PlusPowerSupply:
-    def __init__(self):
-        self.MAX_STROM_MA = 500.0
-        self.kalibrier_tabelle = []
-        self.corr_a = -0.13473834089564027
-        self.corr_b = 0.07800453738409945
-        self.monitor_thread = None
-        self.monitor_running = False
-        self.hat = None
+# ----------------- Hardware initialisieren -----------------
+def init_hardware():
+    """Initialisiert SPI, GPIO und MCC118 DAQ HAT."""
+    global spi, gpio_handle, hat, last_error
+    try:
+        spi = spidev.SpiDev()
+        spi.open(0, 0)
+        spi.max_speed_hz = 1000000
+        spi.mode = 0b00
 
-    def write_dac(self, value):
-        if not (0 <= value <= 4095):
-            raise ValueError("DAC-Wert muss zwischen 0 und 4095 liegen.")
-        control = 0b0011000000000000
-        data = control | (value & 0xFFF)
-        high_byte = (data >> 8) & 0xFF
-        low_byte = data & 0xFF
-        lgpio.gpio_write(gpio_handle, CS_PIN, 0)
-        spi.xfer2([high_byte, low_byte])
-        lgpio.gpio_write(gpio_handle, CS_PIN, 1)
-
-    def kalibrieren(self, sp_step=32, settle=0.05):
-        self.kalibrier_tabelle.clear()
-        emit('plus_output', {'data': "Starte Kalibrierung (Spannungs-Mapping)..."})
+        gpio_handle = lgpio.gpiochip_open(0)
+        lgpio.gpio_claim_output(gpio_handle, CS_PIN)
+        lgpio.gpio_write(gpio_handle, CS_PIN, 1)  # CS inaktiv (HIGH)
+        
         address = select_hat_device(HatIDs.MCC_118)
         hat = mcc118(address)
-
-        for dac_wert in range(0, 4096, sp_step):
-            self.write_dac(dac_wert)
-            time.sleep(settle)
-            spannung = hat.a_in_read(0)
-            self.kalibrier_tabelle.append((spannung, dac_wert))
-            emit('plus_output', {'data': f"DAC {dac_wert:4d} -> {spannung:8.5f} V"})
-
-        if not any(dac == 4095 for _, dac in self.kalibrier_tabelle):
-            self.write_dac(4095)
-            time.sleep(settle)
-            spannung = hat.a_in_read(0)
-            if spannung >= 0:
-                self.kalibrier_tabelle.append((spannung, 4095))
-                emit('plus_output', {'data': f"DAC 4095 -> {spannung:8.5f} V"})
-
-        self.write_dac(0)
-        self.kalibrier_tabelle.sort(key=lambda x: x[0])
-        emit('plus_output', {'data': f"Kalibrierung abgeschlossen. Gespeicherte Punkte: {len(self.kalibrier_tabelle)}"})
-
-    def spannung_zu_dac_interpoliert(self, ziel_spannung):
-        if not self.kalibrier_tabelle:
-            raise RuntimeError("Keine Kalibrierdaten vorhanden. Bitte kalibrieren.")
-        if ziel_spannung <= self.kalibrier_tabelle[0][0]:
-            return self.kalibrier_tabelle[0][1]
-        if ziel_spannung >= self.kalibrier_tabelle[-1][0]:
-            return self.kalibrier_tabelle[-1][1]
-        for i in range(len(self.kalibrier_tabelle) - 1):
-            u1, d1 = self.kalibrier_tabelle[i]
-            u2, d2 = self.kalibrier_tabelle[i+1]
-            if u1 <= ziel_spannung <= u2:
-                if u2 == u1:
-                    return d1
-                dac = d1 + (d2 - d1) * (ziel_spannung - u1) / (u2 - u1)
-                return int(round(dac))
-        raise ValueError("Interpolation fehlgeschlagen.")
-
-    def kalibriere_stromkorrektur(self, mcc_list_mA, true_list_mA):
-        mcc = np.array(mcc_list_mA, dtype=float)
-        true = np.array(true_list_mA, dtype=float)
-        A = np.vstack([np.ones_like(mcc), mcc]).T
-        a, b = np.linalg.lstsq(A, true, rcond=None)[0]
-        self.corr_a, self.corr_b = float(a), float(b)
-        emit('plus_output', {'data': f"Neue Korrektur gesetzt: a={self.corr_a:.6f} mA, b={self.corr_b:.9f}"})
-
-    def apply_strom_korrektur(self, i_mcc_mA):
-        return self.corr_a + self.corr_b * i_mcc_mA
-
-    def strom_ueberwachung(self):
-        channels = [4]
-        channel_mask = chan_list_to_mask(channels)
-        num_channels = len(channels)
-        scan_rate = 1000.0
-        options = OptionFlags.CONTINUOUS
-
-        address = select_hat_device(HatIDs.MCC_118)
-        self.hat = mcc118(address)
-        self.hat.a_in_scan_start(channel_mask, 0, scan_rate, options)
-
-        emit('plus_output', {'data': "Stromüberwachung läuft"})
-        emit('plus_output', {'data': "Shunt-Spannung (V)   MCC_mA   Korrigiert_mA"})
-
-        while self.monitor_running:
-            read_result = self.hat.a_in_scan_read(READ_ALL_AVAILABLE, 0.5)
-            if len(read_result.data) >= num_channels:
-                shunt_v = read_result.data[-1]
-                current_mcc_mA = (shunt_v / (VERSTAERKUNG * SHUNT_WIDERSTAND)) * 1000.0
-                current_true_mA = self.apply_strom_korrektur(current_mcc_mA)
-                emit('plus_output', {'data': f"{shunt_v:10.5f} V   {current_mcc_mA:7.2f} mA   {current_true_mA:9.2f} mA"})
-
-                if current_true_mA > self.MAX_STROM_MA:
-                    self.write_dac(0)
-                    emit('plus_output', {'data': f"⚠️  ÜBERSTROM: {current_true_mA:.1f} mA > {self.MAX_STROM_MA:.1f} mA  -- DAC auf 0 gesetzt."})
-                    break
-            time.sleep(0.05)
-
-        if self.hat:
-            self.hat.a_in_scan_stop()
-            self.hat = None
-
-# ----------------- Minus Power Supply -----------------
-
-class MinusPowerSupply:
-    def __init__(self):
-        self.MAX_SPANNUNG_NEGATIV = -10
-        self.MAX_STROM_MA = 500.0
-        self.kalibrier_tabelle = []
-        self.corr_a = -0.279388
-        self.corr_b = 1.782842
-        self.monitor_thread = None
-        self.monitor_running = False
-        self.hat = None
-
-    def write_dac(self, value):
-        if not (0 <= value <= 4095):
-            raise ValueError("DAC-Wert muss zwischen 0 und 4095 liegen.")
-        control = 0b1011000000000000
-        data = control | (value & 0xFFF)
-        high_byte = (data >> 8) & 0xFF
-        low_byte = data & 0xFF
-        lgpio.gpio_write(gpio_handle, CS_PIN, 0)
-        spi.xfer2([high_byte, low_byte])
-        lgpio.gpio_write(gpio_handle, CS_PIN, 1)
-
-    def kalibrieren(self, sp_step=32, settle=0.05):
-        self.kalibrier_tabelle.clear()
-        emit('minus_output', {'data': "Starte Kalibrierung (Negative Spannung)..."})
-        address = select_hat_device(HatIDs.MCC_118)
-        hat = mcc118(address)
-
-        for dac_wert in range(0, 4096, sp_step):
-            self.write_dac(dac_wert)
-            time.sleep(settle)
-            spannung = hat.a_in_read(0)
-            if spannung <= 0:
-                self.kalibrier_tabelle.append((spannung, dac_wert))
-                emit('minus_output', {'data': f"DAC {dac_wert:4d} -> {spannung:8.5f} V"})
-            else:
-                emit('minus_output', {'data': f"DAC {dac_wert:4d} -> {spannung:8.5f} V (nicht negativ, ignoriert)"})
-
-        if not any(dac == 4095 for _, dac in self.kalibrier_tabelle):
-            self.write_dac(4095)
-            time.sleep(settle)
-            spannung = hat.a_in_read(0)
-            if spannung <= 0:
-                self.kalibrier_tabelle.append((spannung, 4095))
-                emit('minus_output', {'data': f"DAC 4095 -> {spannung:8.5f} V"})
-
-        self.write_dac(0)
-        self.kalibrier_tabelle.sort(key=lambda x: x[0])
-        emit('minus_output', {'data': f"Kalibrierung abgeschlossen. Gespeicherte Punkte: {len(self.kalibrier_tabelle)}"})
-
-    def spannung_zu_dac_interpoliert(self, ziel_spannung):
-        if not self.kalibrier_tabelle:
-            raise RuntimeError("Keine Kalibrierdaten vorhanden. Bitte kalibrieren.")
-        if ziel_spannung > 0:
-            raise ValueError("Nur negative Spannungen erlaubt.")
-        if ziel_spannung <= self.kalibrier_tabelle[0][0]:
-            return self.kalibrier_tabelle[0][1]
-        if ziel_spannung >= self.kalibrier_tabelle[-1][0]:
-            return self.kalibrier_tabelle[-1][1]
-        for i in range(len(self.kalibrier_tabelle) - 1):
-            u1, d1 = self.kalibrier_tabelle[i]
-            u2, d2 = self.kalibrier_tabelle[i+1]
-            if u1 <= ziel_spannung <= u2:
-                if u2 == u1:
-                    return d1
-                dac = d1 + (d2 - d1) * (ziel_spannung - u1) / (u2 - u1)
-                return int(round(dac))
-        raise ValueError("Interpolation fehlgeschlagen.")
-
-    def kalibriere_stromkorrektur(self, mcc_list_mA, true_list_mA):
-        mcc = np.array(mcc_list_mA, dtype=float)
-        true = np.array(true_list_mA, dtype=float)
-        A = np.vstack([np.ones_like(mcc), mcc]).T
-        a, b = np.linalg.lstsq(A, true, rcond=None)[0]
-        self.corr_a, self.corr_b = float(a), float(b)
-        emit('minus_output', {'data': f"Neue Korrektur gesetzt: a={self.corr_a:.6f} mA, b={self.corr_b:.9f}"})
-
-    def apply_strom_korrektur(self, i_mcc_mA):
-        return self.corr_a + self.corr_b * i_mcc_mA
-
-    def strom_ueberwachung(self):
-        channels = [5]
-        channel_mask = chan_list_to_mask(channels)
-        num_channels = len(channels)
-        scan_rate = 1000.0
-        options = OptionFlags.CONTINUOUS
-
-        address = select_hat_device(HatIDs.MCC_118)
-        self.hat = mcc118(address)
-        self.hat.a_in_scan_start(channel_mask, 0, scan_rate, options)
-
-        emit('minus_output', {'data': "Stromüberwachung läuft"})
-        emit('minus_output', {'data': "Shunt-Spannung (V)   MCC_mA   Korrigiert_mA"})
-
-        while self.monitor_running:
-            read_result = self.hat.a_in_scan_read(READ_ALL_AVAILABLE, 0.5)
-            if len(read_result.data) >= num_channels:
-                shunt_v = read_result.data[-1]
-                current_mcc_mA = (shunt_v / (VERSTAERKUNG * SHUNT_WIDERSTAND)) * 1000.0
-                current_true_mA = self.apply_strom_korrektur(current_mcc_mA)
-                emit('minus_output', {'data': f"{shunt_v:10.5f} V   {current_mcc_mA:7.2f} mA   {current_true_mA:9.2f} mA"})
-
-                if current_true_mA > self.MAX_STROM_MA:
-                    self.write_dac(0)
-                    emit('minus_output', {'data': f"⚠️  ÜBERSTROM: {current_true_mA:.1f} mA > {self.MAX_STROM_MA:.1f} mA  -- DAC auf 0 gesetzt."})
-                    break
-            time.sleep(0.1)
-
-        if self.hat:
-            self.hat.a_in_scan_stop()
-            self.hat = None
-
-# Instances
-plus_ps = PlusPowerSupply()
-minus_ps = MinusPowerSupply()
-
-# API Routes for Plus
-@app.route('/api/plus/calibrate', methods=['POST'])
-def plus_calibrate():
-    threading.Thread(target=plus_ps.kalibrieren).start()
-    return jsonify({'status': 'Calibration started'})
-
-@app.route('/api/plus/set_voltage', methods=['POST'])
-def plus_set_voltage():
-    data = request.json
-    try:
-        voltage = float(data['voltage'])
-        dac = plus_ps.spannung_zu_dac_interpoliert(voltage)
-        plus_ps.write_dac(dac)
-        emit('plus_output', {'data': f"Spannung eingestellt: {voltage:.3f} V (DAC={dac})"})
-        if plus_ps.monitor_thread is None or not plus_ps.monitor_thread.is_alive():
-            plus_ps.monitor_running = True
-            plus_ps.monitor_thread = threading.Thread(target=plus_ps.strom_ueberwachung)
-            plus_ps.monitor_thread.start()
-        return jsonify({'status': 'Voltage set'})
+        print("Hardware-Initialisierung erfolgreich.")
+        # Setze Initial-Korrekturwerte
+        set_correction_values()
     except Exception as e:
-        return jsonify({'error': str(e)}), 400
-
-@app.route('/api/plus/stop_monitor', methods=['POST'])
-def plus_stop_monitor():
-    plus_ps.monitor_running = False
-    if plus_ps.monitor_thread:
-        plus_ps.monitor_thread.join()
-    return jsonify({'status': 'Monitor stopped'})
-
-@app.route('/api/plus/recalibrate_current', methods=['POST'])
-def plus_recalibrate_current():
-    data = request.json
-    measurements = data.get('measurements', [])
-    if len(measurements) < 2:
-        return jsonify({'error': 'At least 2 points required'}), 400
-    mcc_list = [m['mcc_mA'] for m in measurements]
-    true_list = [m['true_mA'] for m in measurements]
-    plus_ps.kalibriere_stromkorrektur(mcc_list, true_list)
-    return jsonify({'status': 'Recalibrated'})
-
-# API Routes for Minus
-@app.route('/api/minus/calibrate', methods=['POST'])
-def minus_calibrate():
-    threading.Thread(target=minus_ps.kalibrieren).start()
-    return jsonify({'status': 'Calibration started'})
-
-@app.route('/api/minus/set_voltage', methods=['POST'])
-def minus_set_voltage():
-    data = request.json
-    try:
-        voltage = float(data['voltage'])
-        if voltage > 0 or voltage < minus_ps.MAX_SPANNUNG_NEGATIV:
-            raise ValueError(f"Voltage must be between {minus_ps.MAX_SPANNUNG_NEGATIV} and 0")
-        dac = minus_ps.spannung_zu_dac_interpoliert(voltage)
-        minus_ps.write_dac(dac)
-        emit('minus_output', {'data': f"Spannung eingestellt: {voltage:.3f} V (DAC={dac})"})
-        if minus_ps.monitor_thread is None or not minus_ps.monitor_thread.is_alive():
-            minus_ps.monitor_running = True
-            minus_ps.monitor_thread = threading.Thread(target=minus_ps.strom_ueberwachung)
-            minus_ps.monitor_thread.start()
-        return jsonify({'status': 'Voltage set'})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
-
-@app.route('/api/minus/stop_monitor', methods=['POST'])
-def minus_stop_monitor():
-    minus_ps.monitor_running = False
-    if minus_ps.monitor_thread:
-        minus_ps.monitor_thread.join()
-    return jsonify({'status': 'Monitor stopped'})
-
-@app.route('/api/minus/recalibrate_current', methods=['POST'])
-def minus_recalibrate_current():
-    data = request.json
-    measurements = data.get('measurements', [])
-    if len(measurements) < 2:
-        return jsonify({'error': 'At least 2 points required'}), 400
-    mcc_list = [m['mcc_mA'] for m in measurements]
-    true_list = [m['true_mA'] for m in measurements]
-    minus_ps.kalibriere_stromkorrektur(mcc_list, true_list)
-    return jsonify({'status': 'Recalibrated'})
-
-# Frontend HTML with React
-@app.route('/')
-def index():
-    return render_template_string('''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Labornetzteil Steuerung</title>
-  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.20.15/babel.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.2/dist/socket.io.min.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-gray-100">
-  <div id="root" class="container mx-auto p-4"></div>
-  <script type="text/babel">
-    const { useState, useEffect } = React;
-
-    const App = () => {
-      const [plusVoltage, setPlusVoltage] = useState('');
-      const [minusVoltage, setMinusVoltage] = useState('');
-      const [plusMeasurements, setPlusMeasurements] = useState([{ mcc_mA: '', true_mA: '' }]);
-      const [minusMeasurements, setMinusMeasurements] = useState([{ mcc_mA: '', true_mA: '' }]);
-      const [plusOutput, setPlusOutput] = useState([]);
-      const [minusOutput, setMinusOutput] = useState([]);
-      const [socket, setSocket] = useState(null);
-
-      useEffect(() => {
-        const newSocket = io();
-        setSocket(newSocket);
-
-        newSocket.on('plus_output', ({ data }) => {
-          setPlusOutput((prev) => [...prev, data].slice(-50));
-        });
-
-        newSocket.on('minus_output', ({ data }) => {
-          setMinusOutput((prev) => [...prev, data].slice(-50));
-        });
-
-        return () => newSocket.close();
-      }, []);
-
-      const handleAddMeasurement = (type) => {
-        if (type === 'plus') {
-          setPlusMeasurements([...plusMeasurements, { mcc_mA: '', true_mA: '' }]);
-        } else {
-          setMinusMeasurements([...minusMeasurements, { mcc_mA: '', true_mA: '' }]);
-        }
-      };
-
-      const handleMeasurementChange = (type, index, field, value) => {
-        if (type === 'plus') {
-          const newMeas = [...plusMeasurements];
-          newMeas[index][field] = value;
-          setPlusMeasurements(newMeas);
-        } else {
-          const newMeas = [...minusMeasurements];
-          newMeas[index][field] = value;
-          setMinusMeasurements(newMeas);
-        }
-      };
-
-      const handleCalibrate = (type) => {
-        fetch(`/api/${type}/calibrate`, { method: 'POST' });
-      };
-
-      const handleSetVoltage = (type) => {
-        const voltage = type === 'plus' ? plusVoltage : minusVoltage;
-        fetch(`/api/${type}/set_voltage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ voltage }),
-        });
-      };
-
-      const handleStopMonitor = (type) => {
-        fetch(`/api/${type}/stop_monitor`, { method: 'POST' });
-      };
-
-      const handleRecalibrate = (type) => {
-        const measurements = type === 'plus' ? plusMeasurements : minusMeasurements;
-        fetch(`/api/${type}/recalibrate_current`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ measurements }),
-        });
-      };
-
-      return (
-        <div className="grid grid-cols-2 gap-4">
-          <div className="p-4 bg-white rounded shadow">
-            <h2 className="text-xl font-bold mb-4">Positive Spannung</h2>
-            <button onClick={() => handleCalibrate('plus')} className="bg-blue-500 text-white p-2 rounded mb-2">Kalibrieren</button>
-            <input
-              type="number"
-              value={plusVoltage}
-              onChange={(e) => setPlusVoltage(e.target.value)}
-              placeholder="Spannung (V)"
-              className="border p-2 mb-2 w-full"
-            />
-            <button onClick={() => handleSetVoltage('plus')} className="bg-green-500 text-white p-2 rounded mb-2">Spannung einstellen</button>
-            <button onClick={() => handleStopMonitor('plus')} className="bg-red-500 text-white p-2 rounded mb-4">Überwachung stoppen</button>
-            <h3 className="font-bold mb-2">Stromkorrektur</h3>
-            {plusMeasurements.map((meas, idx) => (
-              <div key={idx} className="flex mb-2">
-                <input
-                  type="number"
-                  value={meas.mcc_mA}
-                  onChange={(e) => handleMeasurementChange('plus', idx, 'mcc_mA', e.target.value)}
-                  placeholder="MCC mA"
-                  className="border p-2 mr-2"
-                />
-                <input
-                  type="number"
-                  value={meas.true_mA}
-                  onChange={(e) => handleMeasurementChange('plus', idx, 'true_mA', e.target.value)}
-                  placeholder="True mA"
-                  className="border p-2"
-                />
-              </div>
-            ))}
-            <button onClick={() => handleAddMeasurement('plus')} className="bg-gray-500 text-white p-2 rounded mb-2">Punkt hinzufügen</button>
-            <button onClick={() => handleRecalibrate('plus')} className="bg-purple-500 text-white p-2 rounded">Rekalibrieren</button>
-            <div className="mt-4 h-64 overflow-y-auto bg-gray-100 p-2">
-              <h3 className="font-bold">Ausgabe:</h3>
-              {plusOutput.map((line, idx) => <p key={idx}>{line}</p>)}
-            </div>
-          </div>
-          <div className="p-4 bg-white rounded shadow">
-            <h2 className="text-xl font-bold mb-4">Negative Spannung</h2>
-            <button onClick={() => handleCalibrate('minus')} className="bg-blue-500 text-white p-2 rounded mb-2">Kalibrieren</button>
-            <input
-              type="number"
-              value={minusVoltage}
-              onChange={(e) => setMinusVoltage(e.target.value)}
-              placeholder="Spannung (-10 bis 0 V)"
-              className="border p-2 mb-2 w-full"
-            />
-            <button onClick={() => handleSetVoltage('minus')} className="bg-green-500 text-white p-2 rounded mb-2">Spannung einstellen</button>
-            <button onClick={() => handleStopMonitor('minus')} className="bg-red-500 text-white p-2 rounded mb-4">Überwachung stoppen</button>
-            <h3 className="font-bold mb-2">Stromkorrektur</h3>
-            {minusMeasurements.map((meas, idx) => (
-              <div key={idx} className="flex mb-2">
-                <input
-                  type="number"
-                  value={meas.mcc_mA}
-                  onChange={(e) => handleMeasurementChange('minus', idx, 'mcc_mA', e.target.value)}
-                  placeholder="MCC mA"
-                  className="border p-2 mr-2"
-                />
-                <input
-                  type="number"
-                  value={meas.true_mA}
-                  onChange={(e) => handleMeasurementChange('minus', idx, 'true_mA', e.target.value)}
-                  placeholder="True mA"
-                  className="border p-2"
-                />
-              </div>
-            ))}
-            <button onClick={() => handleAddMeasurement('minus')} className="bg-gray-500 text-white p-2 rounded mb-2">Punkt hinzufügen</button>
-            <button onClick={() => handleRecalibrate('minus')} className="bg-purple-500 text-white p-2 rounded">Rekalibrieren</button>
-            <div className="mt-4 h-64 overflow-y-auto bg-gray-100 p-2">
-              <h3 className="font-bold">Ausgabe:</h3>
-              {minusOutput.map((line, idx) => <p key={idx}>{line}</p>)}
-            </div>
-          </div>
-        </div>
-      );
-    };
-
-    ReactDOM.render(<App />, document.getElementById('root'));
-  </script>
-</body>
-</html>
-    ''')
+        last_error = f"Fehler bei der Hardware-Initialisierung: {e}"
+        print(last_error)
 
 def cleanup():
-    print("Aufräumen...")
+    """Ressourcen freigeben."""
+    global monitoring_active
+    print("Fahre das System herunter...")
     try:
-        plus_ps.write_dac(0)
-        minus_ps.write_dac(0)
-    except:
-        pass
+        if monitoring_active:
+            monitoring_active = False
+            if monitoring_thread:
+                monitoring_thread.join()
+        
+        write_dac(0) # DAC auf Null setzen
+        
+        if gpio_handle != -1:
+            lgpio.gpio_write(gpio_handle, CS_PIN, 1)
+            lgpio.gpio_chip_close(gpio_handle)
+        if spi:
+            spi.close()
+        if hat:
+            hat.close()
+    except Exception as e:
+        print(f"Fehler beim Aufräumen: {e}")
+
+# ----------------- DAC Funktionen -----------------
+def write_dac(value):
+    """Schreibt 12-bit Wert 0..4095 an DAC (MCP49xx-kompatibel)."""
+    global dac_value, last_error
     try:
-        spi.close()
-        lgpio.gpiochip_close(gpio_handle)
-    except:
+        if not (0 <= value <= 4095):
+            raise ValueError("DAC-Wert muss zwischen 0 und 4095 liegen.")
+        
+        control = 0b0011000000000000 # Für positive Spannung
+        if current_mode == 'negative':
+            control = 0b1011000000000000 # Für negative Spannung
+        
+        data = control | (value & 0xFFF)
+        high_byte = (data >> 8) & 0xFF
+        low_byte  = data & 0xFF
+        
+        if gpio_handle != -1:
+            lgpio.gpio_write(gpio_handle, CS_PIN, 0)
+            spi.xfer2([high_byte, low_byte])
+            lgpio.gpio_write(gpio_handle, CS_PIN, 1)
+        dac_value = value
+        last_error = ""
+    except Exception as e:
+        last_error = f"Fehler beim Schreiben an den DAC: {e}"
+        print(last_error)
+
+# ----------------- Kalibrierung (Spannungs-Mapping) -----------------
+def kalibrieren_sync(sp_step, settle):
+    """
+    Führt die Kalibrierung synchron aus und füllt die Kalibrierungstabelle.
+    Sendet Echtzeit-Updates über eine globale Liste.
+    """
+    global kalibrier_tabelle, last_error, calibration_log
+    try:
+        kalibrier_tabelle.clear()
+        calibration_log.clear()
+        calibration_log.append("Starte Kalibrierung...")
+        
+        for dac_wert in range(0, 4096, sp_step):
+            write_dac(dac_wert)
+            time.sleep(settle)
+            spannung = hat.a_in_read(0) # Channel 0 misst Ausgangsspannung
+            
+            if (current_mode == 'positive' and spannung >= 0) or \
+               (current_mode == 'negative' and spannung <= 0):
+                kalibrier_tabelle.append((spannung, dac_wert))
+                calibration_log.append(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V (gespeichert)")
+            else:
+                calibration_log.append(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V (ignoriert)")
+
+        kalibrier_tabelle.sort(key=lambda x: x[0])
+        last_error = ""
+        calibration_log.append("Kalibrierung abgeschlossen.")
+        if not kalibrier_tabelle:
+            calibration_log.append("ACHTUNG: Keine gültigen Kalibrierungspunkte gefunden!")
+        return True
+    except Exception as e:
+        last_error = f"Fehler während der Kalibrierung: {e}"
+        calibration_log.append(last_error)
+        return False
+
+def spannung_zu_dac_interpoliert(ziel_spannung):
+    """
+    Findet den passenden DAC-Wert für eine Zielspannung durch lineare Interpolation.
+    """
+    if not kalibrier_tabelle:
+        raise ValueError("Keine Kalibrierdaten vorhanden. Bitte kalibrieren.")
+
+    u1, d1 = kalibrier_tabelle[0]
+    u2, d2 = kalibrier_tabelle[-1]
+    
+    if ziel_spannung <= u1: return d1
+    if ziel_spannung >= u2: return d2
+    
+    for i in range(len(kalibrier_tabelle) - 1):
+        u1, d1 = kalibrier_tabelle[i]
+        u2, d2 = kalibrier_tabelle[i + 1]
+        if u1 <= ziel_spannung <= u2:
+            if u2 == u1: return d1
+            dac = d1 + (d2 - d1) * (ziel_spannung - u1) / (u2 - u1)
+            return int(round(dac))
+            
+    return kalibrier_tabelle[-1][1]
+
+# ----------------- Strommessung und Korrektur -----------------
+def set_correction_values():
+    """Setzt die Standardkorrekturwerte basierend auf dem Modus."""
+    global corr_a, corr_b
+    if current_mode == 'positive':
+        corr_a = -0.13473834089564027
+        corr_b = 0.07800453738409945
+    else: # 'negative'
+        corr_a = -0.279388
+        corr_b = 1.782842
+
+def apply_strom_korrektur(i_mcc):
+    """Wendet die lineare Korrektur auf den MCC-Strommesswert an."""
+    return corr_a + corr_b * i_mcc
+
+def read_current_ma():
+    """Liest den korrigierten Stromwert vom MCC118-ADC."""
+    channel = 4 if current_mode == 'positive' else 5
+    v_shunt = hat.a_in_read(channel)
+    strom_ma_roh = (v_shunt / (VERSTAERKUNG * SHUNT_WIDERSTAND)) * 1000.0
+    return apply_strom_korrektur(strom_ma_roh)
+
+def monitoring_loop():
+    """Hintergrund-Thread für die kontinuierliche Überwachung."""
+    global current_voltage, current_current_ma, last_error, monitoring_active
+    while monitoring_active:
+        try:
+            # Lese Ausgangsspannung von MCC118 Channel 0
+            current_voltage = hat.a_in_read(0)
+            
+            # Lese Strom und wende Korrektur an
+            current_current_ma = read_current_ma()
+            
+            # Überstromschutz
+            if current_current_ma > MAX_STROM_MA:
+                print(f"ACHTUNG: Überstrom ({current_current_ma:.3f} mA)! DAC wird auf 0 gesetzt.")
+                write_dac(0)
+                last_error = f"Überstrom erkannt: {current_current_ma:.3f} mA! DAC auf 0 gesetzt."
+            
+            last_error = ""
+        except Exception as e:
+            last_error = f"Fehler bei der Überwachung: {e}"
+            print(last_error)
+            
+        time.sleep(0.5)
+
+# ----------------- Flask-Routen -----------------
+@app.route('/')
+def index():
+    """Rendert die Hauptseite mit der Benutzeroberfläche."""
+    global monitoring_thread, monitoring_active
+    
+    # Starte den Überwachungs-Thread, wenn er nicht läuft
+    if not monitoring_thread or not monitoring_thread.is_alive():
+        monitoring_active = True
+        monitoring_thread = threading.Thread(target=monitoring_loop)
+        monitoring_thread.daemon = True
+        monitoring_thread.start()
+    
+    # HTML-Template für die Web-Oberfläche
+    html_template = """
+    <!DOCTYPE html>
+    <html lang="de">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Labornetzteil Steuerung</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <style>
+            body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+            .container { max-width: 900px; }
+            .btn { transition: all 0.2s; }
+            .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+            .card { background-color: white; border-radius: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+            #message-box { min-height: 40px; }
+            .message-error { background-color: #fee2e2; color: #dc2626; border: 1px solid #dc2626; padding: 0.5rem; border-radius: 0.5rem; font-weight: bold; }
+            .message-info { background-color: #dbeafe; color: #1e40af; border: 1px solid #1e40af; padding: 0.5rem; border-radius: 0.5rem; font-weight: bold; }
+        </style>
+    </head>
+    <body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
+        <div class="container mx-auto p-8 bg-gray-50 rounded-2xl shadow-xl">
+            <h1 class="text-4xl font-bold mb-6 text-center text-gray-800">Labornetzteil Steuerung</h1>
+
+            <!-- Meldungsfeld -->
+            <div id="message-box" class="mb-6"></div>
+
+            <!-- Status und Live-Daten -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 text-center">
+                <div class="card p-6">
+                    <h2 class="text-2xl font-semibold mb-2 text-gray-700">Aktueller Status</h2>
+                    <p class="text-gray-600">Modus: <span id="mode" class="font-bold"></span></p>
+                    <p class="text-gray-600">DAC-Wert: <span id="dac_val" class="font-bold"></span></p>
+                </div>
+                <div class="card p-6">
+                    <h2 class="text-2xl font-semibold mb-2 text-gray-700">Live-Messwerte</h2>
+                    <p class="text-gray-600">Spannung: <span id="live_voltage" class="font-bold text-blue-600"></span> V</p>
+                    <p class="text-gray-600">Strom: <span id="live_current" class="font-bold text-green-600"></span> mA</p>
+                </div>
+            </div>
+
+            <!-- Steuerungssektionen -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+                <!-- Modus- und Spannungssteuerung -->
+                <div class="card p-6">
+                    <h2 class="text-2xl font-semibold mb-4 text-gray-700">Spannungseinstellung</h2>
+                    <form id="voltage-form" class="space-y-4">
+                        <div>
+                            <label for="mode-select" class="block text-gray-700 font-medium">Modus wählen:</label>
+                            <select id="mode-select" name="mode" class="w-full mt-1 p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                                <option value="positive" selected>Positiv</option>
+                                <option value="negative">Negativ</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="voltage" class="block text-gray-700 font-medium">Spannung in V:</label>
+                            <input type="number" id="voltage" name="voltage" step="0.01" class="w-full mt-1 p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500" required>
+                        </div>
+                        <button type="submit" class="btn w-full bg-blue-600 text-white p-3 rounded-md font-semibold hover:bg-blue-700">Spannung setzen</button>
+                    </form>
+                </div>
+
+                <!-- Kalibrierung -->
+                <div class="card p-6">
+                    <h2 class="text-2xl font-semibold mb-4 text-gray-700">Kalibrierung</h2>
+                    <form id="calibration-form" class="space-y-4">
+                        <div>
+                            <label for="step" class="block text-gray-700 font-medium">DAC-Schrittgröße:</label>
+                            <input type="number" id="step" name="step" value="100" class="w-full mt-1 p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500" required>
+                        </div>
+                        <div>
+                            <label for="settle" class="block text-gray-700 font-medium">Wartezeit (s):</label>
+                            <input type="number" id="settle" name="settle" value="0.1" step="0.01" class="w-full mt-1 p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500" required>
+                        </div>
+                        <button type="submit" class="btn w-full bg-green-600 text-white p-3 rounded-md font-semibold hover:bg-green-700">Kalibrierung starten</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            // Funktion zum Anzeigen von Nachrichten im Meldungsfeld
+            const showMessage = (message, type = 'info') => {
+                const messageBox = document.getElementById('message-box');
+                messageBox.className = ''; // Alte Klassen entfernen
+                messageBox.textContent = '';
+                if (message) {
+                    messageBox.textContent = message;
+                    messageBox.classList.add(`message-${type}`);
+                }
+            };
+            
+            // Funktion zum Anzeigen von Kalibrierungsprotokoll
+            const showCalibrationLog = (messages) => {
+                const messageBox = document.getElementById('message-box');
+                messageBox.className = 'message-info';
+                messageBox.innerHTML = '<strong>Kalibrierung läuft...</strong><br>' + messages.join('<br>');
+            };
+
+            // Skript zur Aktualisierung der Live-Daten
+            const fetchData = async () => {
+                try {
+                    const response = await fetch('/get_data');
+                    if (!response.ok) throw new Error('Network response was not ok');
+                    const data = await response.json();
+                    document.getElementById('mode').textContent = data.current_mode === 'positive' ? 'Positiv' : 'Negativ';
+                    document.getElementById('dac_val').textContent = data.dac_value;
+                    document.getElementById('live_voltage').textContent = data.current_voltage.toFixed(3);
+                    document.getElementById('live_current').textContent = data.current_current_ma.toFixed(3);
+                    
+                    // Zeige Fehler oder Kalibrierungsaufforderung im Meldungsfeld an
+                    if (data.last_error) {
+                        showMessage(data.last_error, 'error');
+                    } else if (data.calibration_needed) {
+                        showMessage("Bitte kalibrieren Sie das Netzteil für den aktuellen Modus.", 'info');
+                    } else {
+                        showMessage("");
+                    }
+                } catch (error) {
+                    console.error('Fetch error:', error);
+                    showMessage('Fehler beim Abrufen der Daten: ' + error.message, 'error');
+                }
+            };
+            
+            // Initiales Laden und periodisches Aktualisieren
+            document.addEventListener('DOMContentLoaded', () => {
+                fetchData();
+                setInterval(fetchData, 1000); // 1-Sekunden-Aktualisierung
+            });
+            
+            // Formular für Spannungs- und Modusänderung
+            document.getElementById('voltage-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                showMessage("Spannung wird gesetzt...", 'info');
+                const formData = new FormData(e.target);
+                const mode = formData.get('mode');
+                const voltage = formData.get('voltage');
+                
+                try {
+                    const response = await fetch('/set_voltage', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ mode: mode, voltage: parseFloat(voltage) })
+                    });
+                    const result = await response.json();
+                    if (result.error) {
+                        showMessage(result.error, 'error');
+                    } else {
+                        showMessage("Spannung erfolgreich gesetzt.", 'info');
+                    }
+                    fetchData();
+                } catch (error) {
+                    showMessage('Fehler beim Senden der Spannung: ' + error.message, 'error');
+                }
+            });
+
+            // Formular für Kalibrierung
+            document.getElementById('calibration-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const formData = new FormData(e.target);
+                const step = formData.get('step');
+                const settle = formData.get('settle');
+                
+                let calibrationInterval;
+                try {
+                    showMessage("Kalibrierung wird gestartet...", 'info');
+                    const response = await fetch('/calibrate', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ step: parseInt(step), settle: parseFloat(settle) })
+                    });
+                    const result = await response.json();
+                    
+                    if (result.error) {
+                         showMessage(result.error, 'error');
+                    } else {
+                        // Starte Polling für Kalibrierungsstatus
+                        calibrationInterval = setInterval(async () => {
+                            const statusResponse = await fetch('/get_calibration_status');
+                            const statusData = await statusResponse.json();
+                            showCalibrationLog(statusData.log);
+                            if (statusData.status === 'finished') {
+                                clearInterval(calibrationInterval);
+                                showMessage(statusData.log[statusData.log.length - 1], statusData.success ? 'info' : 'error');
+                                fetchData();
+                            }
+                        }, 500); // Poll alle 500ms
+                    }
+                    
+                } catch (error) {
+                    showMessage('Fehler beim Starten der Kalibrierung: ' + error.message, 'error');
+                    if (calibrationInterval) clearInterval(calibrationInterval);
+                }
+            });
+        </script>
+    </body>
+    </html>
+    """
+    return render_template_string(html_template, current_mode=current_mode)
+
+@app.route('/get_data', methods=['GET'])
+def get_data():
+    """Gibt die aktuellen Messwerte als JSON zurück."""
+    global kalibrier_tabelle
+    return jsonify({
+        'current_mode': current_mode,
+        'dac_value': dac_value,
+        'current_voltage': current_voltage,
+        'current_current_ma': current_current_ma,
+        'last_error': last_error,
+        'calibration_needed': not bool(kalibrier_tabelle)
+    })
+
+@app.route('/get_calibration_status', methods=['GET'])
+def get_calibration_status():
+    """Gibt den aktuellen Kalibrierungs-Log und Status zurück."""
+    global calibration_log
+    status = 'running'
+    if calibration_log and ("abgeschlossen" in calibration_log[-1] or "Fehler" in calibration_log[-1]):
+        status = 'finished'
+    
+    success = not ("Fehler" in ' '.join(calibration_log))
+    
+    return jsonify({'log': calibration_log, 'status': status, 'success': success})
+
+
+@app.route('/set_voltage', methods=['POST'])
+def set_voltage():
+    """Empfängt die Spannungseinstellung und setzt den DAC."""
+    global current_mode, last_error
+    data = request.json
+    mode = data.get('mode')
+    voltage = data.get('voltage')
+
+    if mode != current_mode:
+        current_mode = mode
+        set_correction_values()
+        kalibrier_tabelle.clear()
+        last_error = f"Modus auf '{current_mode}' gewechselt. Bitte Kalibrierung erneut durchführen."
+        return jsonify({'error': last_error})
+
+    try:
+        dac = spannung_zu_dac_interpoliert(voltage)
+        write_dac(dac)
+        return jsonify({'success': True})
+    except Exception as e:
+        last_error = str(e)
+        return jsonify({'error': last_error})
+
+@app.route('/calibrate', methods=['POST'])
+def calibrate_route():
+    """Startet die Kalibrierung in einem Hintergrund-Thread."""
+    data = request.json
+    sp_step = data.get('step')
+    settle = data.get('settle')
+
+    # Führe die Kalibrierung in einem Thread aus, damit der Request sofort zurückkommt
+    threading.Thread(target=kalibrieren_sync, args=(sp_step, settle), daemon=True).start()
+    
+    return jsonify({'success': True, 'message': 'Kalibrierung gestartet.'})
+
+if __name__ == "__main__":
+    init_hardware()
+    try:
+        app.run(host='0.0.0.0', port=5000, debug=False)
+    except KeyboardInterrupt:
         pass
-    print("Beendet.")
-
-import atexit
-atexit.register(cleanup)
-
-if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+    finally:
+        cleanup()
