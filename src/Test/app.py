@@ -1,24 +1,20 @@
 from flask import Flask, request, jsonify, render_template_string
 import time
+import random
 import threading
 from datetime import datetime
 import numpy as np
-from mcculw import ul
-from mcculw.enums import ULRange
-import Adafruit_MCP4725
-import busio
-import board
 
 app = Flask(__name__)
 
 # Globale Konstanten
-SHUNT_WIDERSTAND = 0.1  # Shunt resistor in ohms
-VERSTAERKUNG = 69.0     # Current sense amplifier gain
-DAC_VREF = 5.0          # MCP4725 outputs 0-5V
-CS_PIN = 22             # Unused for I2C DAC
-MAX_STROM_MA = 500.0    # Max current in mA
-MAX_SPANNUNG_NEGATIV = -10  # Max negative voltage
-MAX_SPANNUNG_POSITIV = 10   # Max positive voltage
+SHUNT_WIDERSTAND = 0.1
+VERSTAERKUNG = 69.0
+DAC_VREF = 10.75  # Adjusted to original value
+CS_PIN = 22
+MAX_STROM_MA = 500.0
+MAX_SPANNUNG_NEGATIV = -10
+MAX_SPANNUNG_POSITIV = 10
 
 # Zustandsvariablen
 current_mode = 'positive'
@@ -30,39 +26,25 @@ current_dac = 0
 correction_points = []
 monitoring_output = ["System initialisiert.", "Bereit für Kalibrierung und Betrieb."]
 
-# Hardware Initialisierung
-try:
-    i2c = busio.I2C(board.SCL, board.SDA)
-    dac = Adafruit_MCP4725.MCP4725(i2c)
-    BOARD_NUM = 0
-    ul.set_config(70, BOARD_NUM, 0, 0)  # Configure MCC 118
-except Exception as e:
-    monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] Hardware-Initialisierungsfehler: {str(e)}")
-    raise
-
+# Mock Hardware-Funktionen (reverted to original)
 def write_dac(value):
     global current_dac
     if value < 0 or value > 4095:
         raise ValueError("DAC-Wert muss zwischen 0 und 4095 liegen.")
-    try:
-        dac.set_voltage(value, False)  # Set DAC output (0-4095 maps to 0-5V)
-        current_dac = value
-        monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] DAC gesetzt auf: {value}")
-        return True
-    except Exception as e:
-        monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] DAC Fehler: {str(e)}")
-        raise
+    current_dac = value
+    monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] DAC gesetzt auf: {value}")
+    return True
 
 def read_mcc118_channel(channel):
-    try:
-        if channel not in (0, 4, 5):
-            raise ValueError(f"Ungültiger Kanal: {channel}")
-        value = ul.a_in(BOARD_NUM, channel, ULRange.BIP10VOLTS)
-        voltage = ul.to_eng_units(BOARD_NUM, ULRange.BIP10VOLTS, value)
-        return voltage
-    except Exception as e:
-        monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] MCC118 Fehler: {str(e)}")
-        raise
+    if channel == 0:
+        if current_mode == 'positive':
+            return (current_dac / 4095.0) * 10.0 + (random.random() - 0.5) * 0.01
+        else:
+            return -(current_dac / 4095.0) * 10.0 + (random.random() - 0.5) * 0.01
+    elif channel in (4, 5):
+        simulated_current = (current_dac / 4095.0) * 0.3
+        return simulated_current * SHUNT_WIDERSTAND * VERSTAERKUNG + (random.random() - 0.5) * 0.001
+    return 0
 
 # HTML/CSS/JavaScript (unchanged)
 index_html = """
@@ -425,7 +407,81 @@ index_html = """
             .then(data => {
                 if (data.status === 'success') {
                     updateDisplay(data.voltage, data.current);
-                    showAlert(data.messageEOA
+                    showAlert(data.message, 'success');
+                    if (!monitoringInterval) startMonitoring();
+                } else {
+                    showAlert(data.message, data.status);
+                }
+            });
+        }
+        function startMonitoring() {
+            fetch('/start_monitoring', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success' || data.status === 'warning') {
+                    showAlert(data.message, data.status);
+                    if (!monitoringInterval) {
+                        monitoringInterval = setInterval(updateMonitoring, 100);
+                    }
+                }
+            });
+        }
+        function stopMonitoring() {
+            fetch('/stop_monitoring', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (monitoringInterval) {
+                    clearInterval(monitoringInterval);
+                    monitoringInterval = null;
+                }
+                showAlert(data.message, 'success');
+            });
+        }
+        function emergencyStop() {
+            fetch('/emergency_stop', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (monitoringInterval) {
+                    clearInterval(monitoringInterval);
+                    monitoringInterval = null;
+                }
+                updateDisplay(data.voltage, data.current);
+                showAlert(data.message, 'danger');
+            });
+        }
+        function startCalibration() {
+            document.getElementById('calibrationProgress').style.display = 'block';
+            document.getElementById('calibrationFill').style.width = '0%';
+            fetch('/start_calibration', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('calibrationFill').style.width = `${data.progress}%`;
+                if (data.status === 'success') {
+                    document.getElementById('calibrationProgress').style.display = 'none';
+                    showAlert(data.message, 'success');
+                }
+            });
+        }
+        function addCorrectionPoint() {
+            const mcc = document.getElementById('mccInput').value;
+            const trueVal = document.getElementById('trueInput').value;
+            fetch('/add_correction_point', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({mcc: mcc, true: trueVal})
+            })
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'success') {
@@ -529,20 +585,15 @@ def switch_mode():
     else:
         corr_a = -0.13473834089564027
         corr_b = 0.07800453738409945
-    try:
-        write_dac(0)
-        # Force recalibration after mode switch
-        kalibrier_tabelle.clear()
-        result = _run_calibration()
-        if result['status'] != 'success':
-            monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] Moduswechsel-Kalibrierung fehlgeschlagen: {result['message']}")
-            return jsonify({'status': 'error', 'message': f"Kalibrierung nach Moduswechsel fehlgeschlagen: {result['message']}", 'voltage': 0, 'current': 0})
-        monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] Modus gewechselt zu: {'Positive' if mode == 'positive' else 'Negative'} Spannung")
-        monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] Korrekturwerte: a={corr_a:.6f}, b={corr_b:.9f}")
-        return jsonify({'status': 'success', 'voltage': 0, 'current': 0})
-    except Exception as e:
-        monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] Moduswechsel-Fehler: {str(e)}")
-        return jsonify({'status': 'error', 'message': f"Fehler beim Moduswechsel: {str(e)}", 'voltage': 0, 'current': 0})
+    write_dac(0)
+    kalibrier_tabelle.clear()
+    result = _run_calibration()
+    if result['status'] != 'success':
+        monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] Moduswechsel-Kalibrierung fehlgeschlagen: {result['message']}")
+        return jsonify({'status': 'error', 'message': f"Kalibrierung nach Moduswechsel fehlgeschlagen: {result['message']}", 'voltage': 0, 'current': 0})
+    monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] Modus gewechselt zu: {'Positive' if mode == 'positive' else 'Negative'} Spannung")
+    monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] Korrekturwerte: a={corr_a:.6f}, b={corr_b:.9f}")
+    return jsonify({'status': 'success', 'voltage': 0, 'current': 0})
 
 @app.route('/set_voltage', methods=['POST'])
 def set_voltage():
@@ -561,8 +612,8 @@ def set_voltage():
         monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] Fehler: {str(e)}")
         return jsonify({'status': 'error', 'message': str(e)})
     except Exception as e:
-        monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] Hardware-Fehler: {str(e)}")
-        return jsonify({'status': 'error', 'message': "Hardware-Fehler beim Einstellen der Spannung!"})
+        monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] Fehler: {str(e)}")
+        return jsonify({'status': 'error', 'message': "Fehler beim Einstellen der Spannung!"})
 
 @app.route('/start_monitoring', methods=['POST'])
 def start_monitoring():
@@ -578,24 +629,19 @@ def start_monitoring():
     def monitor():
         global monitoring_active
         while monitoring_active:
-            try:
-                channel = 4 if current_mode == 'positive' else 5
-                shunt_v = read_mcc118_channel(channel)
-                current_mcc_mA = (shunt_v / (VERSTAERKUNG * SHUNT_WIDERSTAND)) * 1000.0
-                current_true_mA = apply_strom_korrektur(current_mcc_mA)
-                current_voltage = read_mcc118_channel(0)
-                monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] {shunt_v:.5f} V   {current_mcc_mA:.2f} mA   {current_true_mA:.2f} mA")
-                
-                if current_true_mA > MAX_STROM_MA:
-                    write_dac(0)
-                    monitoring_active = False
-                    monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ ÜBERSTROM: {current_true_mA:.1f} mA > {MAX_STROM_MA:.1f} mA -- DAC auf 0 gesetzt (Netzteil AUS).")
-                    break
-                time.sleep(0.1)
-            except Exception as e:
-                monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] Überwachungsfehler: {str(e)}")
+            channel = 4 if current_mode == 'positive' else 5
+            shunt_v = read_mcc118_channel(channel)
+            current_mcc_mA = (shunt_v / (VERSTAERKUNG * SHUNT_WIDERSTAND)) * 1000.0
+            current_true_mA = apply_strom_korrektur(current_mcc_mA)
+            current_voltage = read_mcc118_channel(0)
+            monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] {shunt_v:.5f} V   {current_mcc_mA:.2f} mA   {current_true_mA:.2f} mA")
+            
+            if current_true_mA > MAX_STROM_MA:
+                write_dac(0)
                 monitoring_active = False
+                monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ ÜBERSTROM: {current_true_mA:.1f} mA > {MAX_STROM_MA:.1f} mA -- DAC auf 0 gesetzt (Netzteil AUS).")
                 break
+            time.sleep(0.1)
     
     threading.Thread(target=monitor, daemon=True).start()
     return jsonify({'status': 'success', 'message': "Stromüberwachung gestartet"})
@@ -612,14 +658,10 @@ def stop_monitoring():
 @app.route('/emergency_stop', methods=['POST'])
 def emergency_stop():
     global monitoring_active
-    try:
-        write_dac(0)
-        monitoring_active = False
-        monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] 🚨 NOTAUS - DAC auf 0 gesetzt")
-        return jsonify({'status': 'success', 'message': "NOTAUS aktiviert - Netzteil abgeschaltet!", 'voltage': 0, 'current': 0})
-    except Exception as e:
-        monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] NOTAUS-Fehler: {str(e)}")
-        return jsonify({'status': 'error', 'message': "Fehler beim NOTAUS!"})
+    write_dac(0)
+    monitoring_active = False
+    monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] 🚨 NOTAUS - DAC auf 0 gesetzt")
+    return jsonify({'status': 'success', 'message': "NOTAUS aktiviert - Netzteil abgeschaltet!", 'voltage': 0, 'current': 0})
 
 def _run_calibration():
     global kalibrier_tabelle
@@ -632,37 +674,33 @@ def _run_calibration():
     current_step = 0
     valid_points = 0
     
-    try:
-        for dac_wert in range(0, 4096, sp_step):
-            write_dac(dac_wert)
-            time.sleep(settle)
-            spannung = read_mcc118_channel(0)
-            
-            # Relaxed condition to log all points for debugging
-            kalibrier_tabelle.append([spannung, dac_wert])
-            monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] DAC {dac_wert:4} -> {spannung:.5f} V")
-            if (current_mode == 'positive' and spannung >= 0) or (current_mode == 'negative' and spannung <= 0):
-                valid_points += 1
-            
-            current_step += 1
-        
-        write_dac(4095)
+    for dac_wert in range(0, 4096, sp_step):
+        write_dac(dac_wert)
         time.sleep(settle)
         spannung = read_mcc118_channel(0)
-        kalibrier_tabelle.append([spannung, 4095])
-        monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] DAC 4095 -> {spannung:.5f} V")
+        
+        # Log all points for debugging
+        monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] DAC {dac_wert:4} -> {spannung:.5f} V")
         if (current_mode == 'positive' and spannung >= 0) or (current_mode == 'negative' and spannung <= 0):
+            kalibrier_tabelle.append([spannung, dac_wert])
             valid_points += 1
         
-        write_dac(0)
-        kalibrier_tabelle.sort(key=lambda x: x[0])
-        monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] Kalibrierung abgeschlossen. {len(kalibrier_tabelle)} Punkte gespeichert, {valid_points} gültig.")
-        if valid_points < 10:  # Arbitrary threshold to detect calibration issues
-            return {'status': 'warning', 'message': f"Kalibrierung unvollständig: Nur {valid_points} gültige Punkte. Überprüfen Sie die Hardware!", 'progress': 100}
-        return {'status': 'success', 'message': "Kalibrierung erfolgreich abgeschlossen!", 'progress': 100}
-    except Exception as e:
-        monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] Kalibrierungsfehler: {str(e)}")
-        return {'status': 'error', 'message': f"Kalibrierungsfehler: {str(e)}", 'progress': 0}
+        current_step += 1
+    
+    write_dac(4095)
+    time.sleep(settle)
+    spannung = read_mcc118_channel(0)
+    monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] DAC 4095 -> {spannung:.5f} V")
+    if (current_mode == 'positive' and spannung >= 0) or (current_mode == 'negative' and spannung <= 0):
+        kalibrier_tabelle.append([spannung, 4095])
+        valid_points += 1
+    
+    write_dac(0)
+    kalibrier_tabelle.sort(key=lambda x: x[0])
+    monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] Kalibrierung abgeschlossen. {len(kalibrier_tabelle)} Punkte gespeichert, {valid_points} gültig.")
+    if valid_points < 10:
+        return {'status': 'warning', 'message': f"Kalibrierung unvollständig: Nur {valid_points} gültige Punkte. Überprüfen Sie die Hardware für {'negative' if current_mode == 'negative' else 'positive'} Spannungen!", 'progress': 100}
+    return {'status': 'success', 'message': "Kalibrierung erfolgreich abgeschlossen!", 'progress': 100}
 
 @app.route('/start_calibration', methods=['POST'])
 def start_calibration():
@@ -710,16 +748,12 @@ def calculate_correction():
 
 @app.route('/get_monitoring_data', methods=['GET'])
 def get_monitoring_data():
-    try:
-        return jsonify({
-            'output': monitoring_output[-10:],
-            'voltage': read_mcc118_channel(0),
-            'current': apply_strom_korrektur((read_mcc118_channel(4 if current_mode == 'positive' else 5) / (VERSTAERKUNG * SHUNT_WIDERSTAND)) * 1000.0),
-            'monitoring_active': monitoring_active
-        })
-    except Exception as e:
-        monitoring_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] Überwachungsfehler: {str(e)}")
-        return jsonify({'output': monitoring_output[-10:], 'voltage': 0, 'current': 0, 'monitoring_active': monitoring_active})
+    return jsonify({
+        'output': monitoring_output[-10:],
+        'voltage': read_mcc118_channel(0),
+        'current': apply_strom_korrektur((read_mcc118_channel(4 if current_mode == 'positive' else 5) / (VERSTAERKUNG * SHUNT_WIDERSTAND)) * 1000.0),
+        'monitoring_active': monitoring_active
+    })
 
 def spannung_zu_dac_interpoliert(ziel_spannung):
     if not kalibrier_tabelle:
@@ -750,6 +784,5 @@ def apply_strom_korrektur(i_mcc_mA):
     return corr_a + corr_b * i_mcc_mA
 
 if __name__ == '__main__':
-    # Starte Kalibrierung nach Serverstart
     threading.Thread(target=_run_calibration, daemon=True).start()
     app.run(debug=True)
