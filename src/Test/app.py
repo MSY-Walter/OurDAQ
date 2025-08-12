@@ -40,6 +40,7 @@ dac_value = 0
 current_voltage = 0.0
 current_current_ma = 0.0
 last_error = ""
+calibration_log = []
 
 app = Flask(__name__)
 
@@ -115,13 +116,16 @@ def write_dac(value):
         print(last_error)
 
 # ----------------- Kalibrierung (Spannungs-Mapping) -----------------
-def kalibrieren(sp_step, settle):
+def kalibrieren_sync(sp_step, settle):
     """
-    Fährt DAC in Schritten, misst die Spannung und füllt die Kalibrierungstabelle.
+    Führt die Kalibrierung synchron aus und füllt die Kalibrierungstabelle.
+    Sendet Echtzeit-Updates über eine globale Liste.
     """
-    global kalibrier_tabelle, last_error
+    global kalibrier_tabelle, last_error, calibration_log
     try:
         kalibrier_tabelle.clear()
+        calibration_log.clear()
+        calibration_log.append("Starte Kalibrierung...")
         
         for dac_wert in range(0, 4096, sp_step):
             write_dac(dac_wert)
@@ -131,12 +135,19 @@ def kalibrieren(sp_step, settle):
             if (current_mode == 'positive' and spannung >= 0) or \
                (current_mode == 'negative' and spannung <= 0):
                 kalibrier_tabelle.append((spannung, dac_wert))
-                
+                calibration_log.append(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V (gespeichert)")
+            else:
+                calibration_log.append(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V (ignoriert)")
+
         kalibrier_tabelle.sort(key=lambda x: x[0])
         last_error = ""
+        calibration_log.append("Kalibrierung abgeschlossen.")
+        if not kalibrier_tabelle:
+            calibration_log.append("ACHTUNG: Keine gültigen Kalibrierungspunkte gefunden!")
         return True
     except Exception as e:
         last_error = f"Fehler während der Kalibrierung: {e}"
+        calibration_log.append(last_error)
         return False
 
 def spannung_zu_dac_interpoliert(ziel_spannung):
@@ -313,7 +324,14 @@ def index():
                     messageBox.classList.add(`message-${type}`);
                 }
             };
-        
+            
+            // Funktion zum Anzeigen von Kalibrierungsprotokoll
+            const showCalibrationLog = (messages) => {
+                const messageBox = document.getElementById('message-box');
+                messageBox.className = 'message-info';
+                messageBox.innerHTML = '<strong>Kalibrierung läuft...</strong><br>' + messages.join('<br>');
+            };
+
             // Skript zur Aktualisierung der Live-Daten
             const fetchData = async () => {
                 try {
@@ -338,7 +356,7 @@ def index():
                     showMessage('Fehler beim Abrufen der Daten: ' + error.message, 'error');
                 }
             };
-
+            
             // Initiales Laden und periodisches Aktualisieren
             document.addEventListener('DOMContentLoaded', () => {
                 fetchData();
@@ -374,26 +392,39 @@ def index():
             // Formular für Kalibrierung
             document.getElementById('calibration-form').addEventListener('submit', async (e) => {
                 e.preventDefault();
-                showMessage("Kalibrierung läuft...", 'info');
                 const formData = new FormData(e.target);
                 const step = formData.get('step');
                 const settle = formData.get('settle');
-
+                
+                let calibrationInterval;
                 try {
+                    showMessage("Kalibrierung wird gestartet...", 'info');
                     const response = await fetch('/calibrate', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({ step: parseInt(step), settle: parseFloat(settle) })
                     });
                     const result = await response.json();
+                    
                     if (result.error) {
-                        showMessage(result.error, 'error');
+                         showMessage(result.error, 'error');
                     } else {
-                        showMessage("Kalibrierung erfolgreich!", 'info');
+                        // Starte Polling für Kalibrierungsstatus
+                        calibrationInterval = setInterval(async () => {
+                            const statusResponse = await fetch('/get_calibration_status');
+                            const statusData = await statusResponse.json();
+                            showCalibrationLog(statusData.log);
+                            if (statusData.status === 'finished') {
+                                clearInterval(calibrationInterval);
+                                showMessage(statusData.log[statusData.log.length - 1], statusData.success ? 'info' : 'error');
+                                fetchData();
+                            }
+                        }, 500); // Poll alle 500ms
                     }
-                    fetchData();
+                    
                 } catch (error) {
                     showMessage('Fehler beim Starten der Kalibrierung: ' + error.message, 'error');
+                    if (calibrationInterval) clearInterval(calibrationInterval);
                 }
             });
         </script>
@@ -414,6 +445,19 @@ def get_data():
         'last_error': last_error,
         'calibration_needed': not bool(kalibrier_tabelle)
     })
+
+@app.route('/get_calibration_status', methods=['GET'])
+def get_calibration_status():
+    """Gibt den aktuellen Kalibrierungs-Log und Status zurück."""
+    global calibration_log
+    status = 'running'
+    if calibration_log and ("abgeschlossen" in calibration_log[-1] or "Fehler" in calibration_log[-1]):
+        status = 'finished'
+    
+    success = not ("Fehler" in ' '.join(calibration_log))
+    
+    return jsonify({'log': calibration_log, 'status': status, 'success': success})
+
 
 @app.route('/set_voltage', methods=['POST'])
 def set_voltage():
@@ -440,20 +484,18 @@ def set_voltage():
 
 @app.route('/calibrate', methods=['POST'])
 def calibrate_route():
-    """Startet die Kalibrierung."""
+    """Startet die Kalibrierung in einem Hintergrund-Thread."""
     data = request.json
     sp_step = data.get('step')
     settle = data.get('settle')
 
-    if not kalibrieren(sp_step, settle):
-        return jsonify({'error': last_error})
+    # Führe die Kalibrierung in einem Thread aus, damit der Request sofort zurückkommt
+    threading.Thread(target=kalibrieren_sync, args=(sp_step, settle), daemon=True).start()
     
-    return jsonify({'success': True})
+    return jsonify({'success': True, 'message': 'Kalibrierung gestartet.'})
 
 if __name__ == "__main__":
     init_hardware()
-    # Der Flask-Server wird im Debug-Modus gestartet, damit er bei Änderungen neu lädt.
-    # Für den produktiven Einsatz sollte debug=False gesetzt werden.
     try:
         app.run(host='0.0.0.0', port=5000, debug=False)
     except KeyboardInterrupt:
