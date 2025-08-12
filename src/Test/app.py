@@ -2,7 +2,8 @@
 """
 Web-Steuerprogramm für Labornetzteil.
 Bietet eine Flask-Weboberfläche zur Einstellung der Spannung und
-zur Überwachung des Stroms.
+zur Überwachung des Stroms, die sowohl positive als auch negative
+Spannungen unterstützt.
 """
 
 from flask import Flask, render_template_string, request, jsonify
@@ -40,7 +41,6 @@ dac_value = 0
 current_voltage = 0.0
 current_current_ma = 0.0
 last_error = ""
-calibration_log = []
 
 app = Flask(__name__)
 
@@ -97,9 +97,13 @@ def write_dac(value):
         if not (0 <= value <= 4095):
             raise ValueError("DAC-Wert muss zwischen 0 und 4095 liegen.")
         
-        control = 0b0011000000000000 # Für positive Spannung
-        if current_mode == 'negative':
-            control = 0b1011000000000000 # Für negative Spannung
+        # Wähle den korrekten Control-Wert basierend auf dem Modus
+        if current_mode == 'positive':
+            control = 0b0011000000000000
+            channel = 0
+        else: # 'negative'
+            control = 0b1011000000000000
+            channel = 1 # MCP4922 hat 2 Kanäle, hier Kanal B für negative Spannung
         
         data = control | (value & 0xFFF)
         high_byte = (data >> 8) & 0xFF
@@ -116,39 +120,40 @@ def write_dac(value):
         print(last_error)
 
 # ----------------- Kalibrierung (Spannungs-Mapping) -----------------
-def kalibrieren_sync(sp_step, settle):
+def kalibrieren():
     """
-    Führt die Kalibrierung synchron aus und füllt die Kalibrierungstabelle.
-    Sendet Echtzeit-Updates über eine globale Liste.
+    Führt die Kalibrierung basierend auf dem aktuellen Modus durch.
+    Die Kalibrierungslogik ist identisch mit Ihren ursprünglichen Dateien.
     """
-    global kalibrier_tabelle, last_error, calibration_log
-    try:
-        kalibrier_tabelle.clear()
-        calibration_log.clear()
-        calibration_log.append("Starte Kalibrierung...")
+    global kalibrier_tabelle, last_error
+    kalibrier_tabelle.clear()
+    
+    # Der MCC118 DAQ HAT wird in init_hardware() global initialisiert.
+    # Kein erneuter Aufruf von select_hat_device() oder mcc118() nötig.
+    
+    print(f"\nStarte Kalibrierung (Modus: {current_mode})...")
+    
+    for dac_wert in range(0, 4096, 100): # Schrittgröße 100
+        write_dac(dac_wert)
+        time.sleep(0.1) # Wartezeit 0.1s
+        spannung = hat.a_in_read(0)  # Channel 0 misst Ausgangsspannung
         
-        for dac_wert in range(0, 4096, sp_step):
-            write_dac(dac_wert)
-            time.sleep(settle)
-            spannung = hat.a_in_read(0) # Channel 0 misst Ausgangsspannung
-            
-            if (current_mode == 'positive' and spannung >= 0) or \
-               (current_mode == 'negative' and spannung <= 0):
-                kalibrier_tabelle.append((spannung, dac_wert))
-                calibration_log.append(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V (gespeichert)")
-            else:
-                calibration_log.append(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V (ignoriert)")
+        if (current_mode == 'positive' and spannung >= 0) or \
+           (current_mode == 'negative' and spannung <= 0):
+            kalibrier_tabelle.append((spannung, dac_wert))
+            print(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V (gespeichert)")
+        else:
+            print(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V (ignoriert)")
 
-        kalibrier_tabelle.sort(key=lambda x: x[0])
-        last_error = ""
-        calibration_log.append("Kalibrierung abgeschlossen.")
-        if not kalibrier_tabelle:
-            calibration_log.append("ACHTUNG: Keine gültigen Kalibrierungspunkte gefunden!")
-        return True
-    except Exception as e:
-        last_error = f"Fehler während der Kalibrierung: {e}"
-        calibration_log.append(last_error)
-        return False
+    # Sortieren nach Spannung
+    kalibrier_tabelle.sort(key=lambda x: x[0])
+    
+    # Sicher zurücksetzen
+    write_dac(0)
+    print("Kalibrierung abgeschlossen.")
+    if not kalibrier_tabelle:
+        last_error = "ACHTUNG: Keine gültigen Kalibrierungspunkte gefunden!"
+    return True
 
 def spannung_zu_dac_interpoliert(ziel_spannung):
     """
@@ -156,17 +161,27 @@ def spannung_zu_dac_interpoliert(ziel_spannung):
     """
     if not kalibrier_tabelle:
         raise ValueError("Keine Kalibrierdaten vorhanden. Bitte kalibrieren.")
+        
+    if current_mode == 'negative' and ziel_spannung > 0:
+        raise ValueError("Nur negative Spannungen erlaubt im negativen Modus.")
 
     u1, d1 = kalibrier_tabelle[0]
     u2, d2 = kalibrier_tabelle[-1]
     
-    if ziel_spannung <= u1: return d1
-    if ziel_spannung >= u2: return d2
+    if (current_mode == 'positive' and ziel_spannung <= u1) or \
+       (current_mode == 'negative' and ziel_spannung >= u1):
+        return d1
+    
+    if (current_mode == 'positive' and ziel_spannung >= u2) or \
+       (current_mode == 'negative' and ziel_spannung <= u2):
+        return d2
     
     for i in range(len(kalibrier_tabelle) - 1):
         u1, d1 = kalibrier_tabelle[i]
         u2, d2 = kalibrier_tabelle[i + 1]
-        if u1 <= ziel_spannung <= u2:
+        
+        if (current_mode == 'positive' and u1 <= ziel_spannung <= u2) or \
+           (current_mode == 'negative' and u2 <= ziel_spannung <= u1):
             if u2 == u1: return d1
             dac = d1 + (d2 - d1) * (ziel_spannung - u1) / (u2 - u1)
             return int(round(dac))
@@ -190,6 +205,7 @@ def apply_strom_korrektur(i_mcc):
 
 def read_current_ma():
     """Liest den korrigierten Stromwert vom MCC118-ADC."""
+    # MCC118 Channel 4 für positiven Strom, 5 für negativen
     channel = 4 if current_mode == 'positive' else 5
     v_shunt = hat.a_in_read(channel)
     strom_ma_roh = (v_shunt / (VERSTAERKUNG * SHUNT_WIDERSTAND)) * 1000.0
@@ -212,7 +228,7 @@ def monitoring_loop():
                 write_dac(0)
                 last_error = f"Überstrom erkannt: {current_current_ma:.3f} mA! DAC auf 0 gesetzt."
             
-            last_error = ""
+            # last_error wird nur bei einem neuen Fehler überschrieben
         except Exception as e:
             last_error = f"Fehler bei der Überwachung: {e}"
             print(last_error)
@@ -298,17 +314,7 @@ def index():
                 <!-- Kalibrierung -->
                 <div class="card p-6">
                     <h2 class="text-2xl font-semibold mb-4 text-gray-700">Kalibrierung</h2>
-                    <form id="calibration-form" class="space-y-4">
-                        <div>
-                            <label for="step" class="block text-gray-700 font-medium">DAC-Schrittgröße:</label>
-                            <input type="number" id="step" name="step" value="100" class="w-full mt-1 p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500" required>
-                        </div>
-                        <div>
-                            <label for="settle" class="block text-gray-700 font-medium">Wartezeit (s):</label>
-                            <input type="number" id="settle" name="settle" value="0.1" step="0.01" class="w-full mt-1 p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500" required>
-                        </div>
-                        <button type="submit" class="btn w-full bg-green-600 text-white p-3 rounded-md font-semibold hover:bg-green-700">Kalibrierung starten</button>
-                    </form>
+                    <button id="calibrate-btn" class="btn w-full bg-green-600 text-white p-3 rounded-md font-semibold hover:bg-green-700">Kalibrierung starten</button>
                 </div>
             </div>
         </div>
@@ -325,13 +331,6 @@ def index():
                 }
             };
             
-            // Funktion zum Anzeigen von Kalibrierungsprotokoll
-            const showCalibrationLog = (messages) => {
-                const messageBox = document.getElementById('message-box');
-                messageBox.className = 'message-info';
-                messageBox.innerHTML = '<strong>Kalibrierung läuft...</strong><br>' + messages.join('<br>');
-            };
-
             // Skript zur Aktualisierung der Live-Daten
             const fetchData = async () => {
                 try {
@@ -389,42 +388,25 @@ def index():
                 }
             });
 
-            // Formular für Kalibrierung
-            document.getElementById('calibration-form').addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const formData = new FormData(e.target);
-                const step = formData.get('step');
-                const settle = formData.get('settle');
-                
-                let calibrationInterval;
+            // Button für Kalibrierung
+            document.getElementById('calibrate-btn').addEventListener('click', async () => {
+                showMessage("Kalibrierung wird gestartet...", 'info');
                 try {
-                    showMessage("Kalibrierung wird gestartet...", 'info');
                     const response = await fetch('/calibrate', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ step: parseInt(step), settle: parseFloat(settle) })
+                        body: JSON.stringify({}) // Kein body notwendig, da Werte fest im Backend sind
                     });
                     const result = await response.json();
                     
                     if (result.error) {
                          showMessage(result.error, 'error');
                     } else {
-                        // Starte Polling für Kalibrierungsstatus
-                        calibrationInterval = setInterval(async () => {
-                            const statusResponse = await fetch('/get_calibration_status');
-                            const statusData = await statusResponse.json();
-                            showCalibrationLog(statusData.log);
-                            if (statusData.status === 'finished') {
-                                clearInterval(calibrationInterval);
-                                showMessage(statusData.log[statusData.log.length - 1], statusData.success ? 'info' : 'error');
-                                fetchData();
-                            }
-                        }, 500); // Poll alle 500ms
+                        showMessage("Kalibrierung erfolgreich abgeschlossen. Bitte Spannung setzen.", 'info');
                     }
-                    
+                    fetchData();
                 } catch (error) {
                     showMessage('Fehler beim Starten der Kalibrierung: ' + error.message, 'error');
-                    if (calibrationInterval) clearInterval(calibrationInterval);
                 }
             });
         </script>
@@ -445,19 +427,6 @@ def get_data():
         'last_error': last_error,
         'calibration_needed': not bool(kalibrier_tabelle)
     })
-
-@app.route('/get_calibration_status', methods=['GET'])
-def get_calibration_status():
-    """Gibt den aktuellen Kalibrierungs-Log und Status zurück."""
-    global calibration_log
-    status = 'running'
-    if calibration_log and ("abgeschlossen" in calibration_log[-1] or "Fehler" in calibration_log[-1]):
-        status = 'finished'
-    
-    success = not ("Fehler" in ' '.join(calibration_log))
-    
-    return jsonify({'log': calibration_log, 'status': status, 'success': success})
-
 
 @app.route('/set_voltage', methods=['POST'])
 def set_voltage():
@@ -484,15 +453,17 @@ def set_voltage():
 
 @app.route('/calibrate', methods=['POST'])
 def calibrate_route():
-    """Startet die Kalibrierung in einem Hintergrund-Thread."""
-    data = request.json
-    sp_step = data.get('step')
-    settle = data.get('settle')
+    """Startet die Kalibrierung im Haupt-Thread."""
+    global last_error
+    try:
+        # Feste Werte aus Ihrer Datei
+        kalibrieren()
+        last_error = "" # Fehler zurücksetzen bei Erfolg
+        return jsonify({'success': True, 'message': 'Kalibrierung gestartet.'})
+    except Exception as e:
+        last_error = str(e)
+        return jsonify({'error': last_error})
 
-    # Führe die Kalibrierung in einem Thread aus, damit der Request sofort zurückkommt
-    threading.Thread(target=kalibrieren_sync, args=(sp_step, settle), daemon=True).start()
-    
-    return jsonify({'success': True, 'message': 'Kalibrierung gestartet.'})
 
 if __name__ == "__main__":
     init_hardware()
