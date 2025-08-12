@@ -357,40 +357,53 @@ def handle_configuration(n_clicks, mode, channel, waveform):
     Input('display-interval', 'n_intervals')
 )
 def update_display(n_intervals):
-    """Aktualisiert die Messwertanzeige basierend auf Modus und Wellenform."""
+    """
+    Aktualisiert die Messwertanzeige. Für Rechteckwellen wird die Spitzenamplitude (±V/A)
+    angezeigt, für andere Wellenformen der Effektivwert (RMS).
+    """
     if not dmm.configured:
         return '0.000000 V'
     
     display_data = dmm.get_display_data()
     wert = display_data['wert']
-    display_value = 0.0
-
-    # Einheitenberechnung je nach Modus und Wellenform
-    if dmm.modus == "DC Spannung":
+    display_text = ""
+    
+    # --- DC Modi ---
+    if "DC" in dmm.modus:
         display_value = wert
-    elif dmm.modus == "AC Spannung":
+        if "Strom" in dmm.modus:
+            display_value /= 1.0  # Annahme: A = V / 1Ω Shunt
+        unit = dmm.mode_units[dmm.modus]
+        display_text = f"{display_value:.6f} {unit}"
+
+    # --- AC Modi ---
+    elif "AC" in dmm.modus:
         peak_value = abs(wert)
-        if dmm.waveform == 'Sinus':
-            display_value = peak_value / math.sqrt(2)
-        elif dmm.waveform == 'Dreieck':
-            display_value = peak_value / math.sqrt(3)
-        elif dmm.waveform == 'Rechteck':
-            display_value = peak_value
-    elif dmm.modus == "DC Strom":
-        display_value = wert / 1.0  # Annahme: A = V / 1Ω Shunt
-    elif dmm.modus == "AC Strom":
-        peak_value = abs(wert)
-        strom_peak = peak_value / 1.0  # Annahme: Ipeak = Vpeak / 1Ω Shunt
-        if dmm.waveform == 'Sinus':
-            display_value = strom_peak / math.sqrt(2)
-        elif dmm.waveform == 'Dreieck':
-            display_value = strom_peak / math.sqrt(3)
-        elif dmm.waveform == 'Rechteck':
-            display_value = strom_peak
-    
-    unit = dmm.mode_units[dmm.modus]
-    display_text = f"{display_value:.6f} {unit}"
-    
+        
+        # Spezielle Anzeige für Rechteckwelle (Spitzenamplitude)
+        if dmm.waveform == 'Rechteck':
+            base_unit = "A" if "Strom" in dmm.modus else "V"
+            if base_unit == "A":
+                peak_value /= 1.0 # Annahme: Ipeak = Vpeak / 1Ω Shunt
+            display_text = f"±{peak_value:.6f} {base_unit}"
+        
+        # Standard RMS-Berechnung für Sinus und Dreieck
+        else:
+            display_value = 0.0
+            strom_peak = peak_value / 1.0 # Annahme für Strom
+            
+            if dmm.waveform == 'Sinus':
+                display_value = peak_value / math.sqrt(2)
+                if "Strom" in dmm.modus:
+                    display_value = strom_peak / math.sqrt(2)
+            elif dmm.waveform == 'Dreieck':
+                display_value = peak_value / math.sqrt(3)
+                if "Strom" in dmm.modus:
+                    display_value = strom_peak / math.sqrt(3)
+            
+            unit = dmm.mode_units[dmm.modus]
+            display_text = f"{display_value:.6f} {unit}"
+            
     return display_text
 
 def calculate_rms_value(wert, modus, waveform):
