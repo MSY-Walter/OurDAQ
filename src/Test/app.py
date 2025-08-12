@@ -236,11 +236,17 @@ def index():
             .btn { transition: all 0.2s; }
             .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
             .card { background-color: white; border-radius: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+            #message-box { min-height: 40px; }
+            .message-error { background-color: #fee2e2; color: #dc2626; border: 1px solid #dc2626; padding: 0.5rem; border-radius: 0.5rem; font-weight: bold; }
+            .message-info { background-color: #dbeafe; color: #1e40af; border: 1px solid #1e40af; padding: 0.5rem; border-radius: 0.5rem; font-weight: bold; }
         </style>
     </head>
     <body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
         <div class="container mx-auto p-8 bg-gray-50 rounded-2xl shadow-xl">
             <h1 class="text-4xl font-bold mb-6 text-center text-gray-800">Labornetzteil Steuerung</h1>
+
+            <!-- Meldungsfeld -->
+            <div id="message-box" class="mb-6"></div>
 
             <!-- Status und Live-Daten -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 text-center">
@@ -248,7 +254,6 @@ def index():
                     <h2 class="text-2xl font-semibold mb-2 text-gray-700">Aktueller Status</h2>
                     <p class="text-gray-600">Modus: <span id="mode" class="font-bold"></span></p>
                     <p class="text-gray-600">DAC-Wert: <span id="dac_val" class="font-bold"></span></p>
-                    <p class="text-gray-600">Letzter Fehler: <span id="error_msg" class="font-bold text-red-500"></span></p>
                 </div>
                 <div class="card p-6">
                     <h2 class="text-2xl font-semibold mb-2 text-gray-700">Live-Messwerte</h2>
@@ -298,6 +303,17 @@ def index():
         </div>
 
         <script>
+            // Funktion zum Anzeigen von Nachrichten im Meldungsfeld
+            const showMessage = (message, type = 'info') => {
+                const messageBox = document.getElementById('message-box');
+                messageBox.className = ''; // Alte Klassen entfernen
+                messageBox.textContent = '';
+                if (message) {
+                    messageBox.textContent = message;
+                    messageBox.classList.add(`message-${type}`);
+                }
+            };
+        
             // Skript zur Aktualisierung der Live-Daten
             const fetchData = async () => {
                 try {
@@ -308,9 +324,18 @@ def index():
                     document.getElementById('dac_val').textContent = data.dac_value;
                     document.getElementById('live_voltage').textContent = data.current_voltage.toFixed(3);
                     document.getElementById('live_current').textContent = data.current_current_ma.toFixed(3);
-                    document.getElementById('error_msg').textContent = data.last_error;
+                    
+                    // Zeige Fehler oder Kalibrierungsaufforderung im Meldungsfeld an
+                    if (data.last_error) {
+                        showMessage(data.last_error, 'error');
+                    } else if (data.calibration_needed) {
+                        showMessage("Bitte kalibrieren Sie das Netzteil für den aktuellen Modus.", 'info');
+                    } else {
+                        showMessage("");
+                    }
                 } catch (error) {
                     console.error('Fetch error:', error);
+                    showMessage('Fehler beim Abrufen der Daten: ' + error.message, 'error');
                 }
             };
 
@@ -323,6 +348,7 @@ def index():
             // Formular für Spannungs- und Modusänderung
             document.getElementById('voltage-form').addEventListener('submit', async (e) => {
                 e.preventDefault();
+                showMessage("Spannung wird gesetzt...", 'info');
                 const formData = new FormData(e.target);
                 const mode = formData.get('mode');
                 const voltage = formData.get('voltage');
@@ -335,22 +361,24 @@ def index():
                     });
                     const result = await response.json();
                     if (result.error) {
-                        alert(result.error);
+                        showMessage(result.error, 'error');
+                    } else {
+                        showMessage("Spannung erfolgreich gesetzt.", 'info');
                     }
                     fetchData();
                 } catch (error) {
-                    alert('Fehler beim Senden der Spannung: ' + error.message);
+                    showMessage('Fehler beim Senden der Spannung: ' + error.message, 'error');
                 }
             });
 
             // Formular für Kalibrierung
             document.getElementById('calibration-form').addEventListener('submit', async (e) => {
                 e.preventDefault();
+                showMessage("Kalibrierung läuft...", 'info');
                 const formData = new FormData(e.target);
                 const step = formData.get('step');
                 const settle = formData.get('settle');
 
-                document.getElementById('error_msg').textContent = "Kalibrierung läuft...";
                 try {
                     const response = await fetch('/calibrate', {
                         method: 'POST',
@@ -359,13 +387,13 @@ def index():
                     });
                     const result = await response.json();
                     if (result.error) {
-                        alert(result.error);
+                        showMessage(result.error, 'error');
                     } else {
-                        alert("Kalibrierung erfolgreich!");
+                        showMessage("Kalibrierung erfolgreich!", 'info');
                     }
                     fetchData();
                 } catch (error) {
-                    alert('Fehler beim Starten der Kalibrierung: ' + error.message);
+                    showMessage('Fehler beim Starten der Kalibrierung: ' + error.message, 'error');
                 }
             });
         </script>
@@ -377,12 +405,14 @@ def index():
 @app.route('/get_data', methods=['GET'])
 def get_data():
     """Gibt die aktuellen Messwerte als JSON zurück."""
+    global kalibrier_tabelle
     return jsonify({
         'current_mode': current_mode,
         'dac_value': dac_value,
         'current_voltage': current_voltage,
         'current_current_ma': current_current_ma,
-        'last_error': last_error
+        'last_error': last_error,
+        'calibration_needed': not bool(kalibrier_tabelle)
     })
 
 @app.route('/set_voltage', methods=['POST'])
