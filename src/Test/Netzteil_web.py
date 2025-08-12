@@ -2,469 +2,168 @@
 # -*- coding: utf-8 -*-
 
 """
-Dash Web-Anwendung zur Steuerung eines Zweikanal-Labornetzteils.
-- Kombiniert die Logik für positive und negative Spannungsausgänge.
-- Bietet eine Web-Oberfläche zur Einstellung der Spannung und Überwachung des Stroms.
-- Führt kontinuierliche Stromüberwachung und Überstromschutz im Hintergrund aus.
-- Zeigt Spannungs- und Stromwerte sowie eine Live-Grafik des Stromverlaufs an.
+Steuerprogramm für Labornetzteil als Dash Web-Anwendung.
+
+Funktionen:
+- Web-Interface zur Steuerung.
+- Einmalige Spannungskalibrierung per Knopfdruck.
+- Einstellen der Ausgangsspannung über ein Eingabefeld.
+- Echtzeit-Anzeige von Strom und Spannung in Graphen.
+- Dauerhafte Stromüberwachung mit linearem Korrekturfaktor.
+- Überstromschutz: Setzt den DAC bei Überschreitung auf 0.
+- Möglichkeit, die Stromkorrektur-Parameter im Web-Interface anzupassen.
 """
 
 import dash
-from dash import dcc, html
-from dash.dependencies import Input, Output, State
+from dash import dcc, html, Input, Output, State, no_update
 import plotly.graph_objs as go
 from collections import deque
 import time
-import threading
 import atexit
 import socket
 import numpy as np
 
-# Versuche, die Hardware-Bibliotheken zu importieren.
-# Wenn dies fehlschlägt, wird ein "Dummy-Modus" aktiviert.
+# --- Hardware-spezifische Importe ---
+# Wenn Sie auf einem System ohne die Hardware-Bibliotheken testen,
+# können die folgenden Zeilen auskommentiert bleiben.
+# Die "MOCK HARDWARE" Sektion weiter unten simuliert die Funktionen.
 try:
     import spidev
     import lgpio
     from daqhats import mcc118, OptionFlags, HatIDs, HatError
     from daqhats_utils import select_hat_device, chan_list_to_mask
     HARDWARE_AVAILABLE = True
-except (ImportError, RuntimeError) as e:
-    print(f"WARNUNG: Hardware-Bibliotheken nicht gefunden oder konnten nicht geladen werden: {e}")
-    print("Die Anwendung wird im Dummy-Modus ohne echte Hardware-Steuerung ausgeführt.")
+except ImportError:
     HARDWARE_AVAILABLE = False
+    print("WARNUNG: Hardware-Bibliotheken (spidev, lgpio, daqhats) nicht gefunden. Starte im Simulationsmodus.")
 
-# ----------------- Globale Konfiguration -----------------
-# Konstanten für beide Kanäle
-CS_PIN = 22
+
+# ----------------- Konstanten -----------------
+SHUNT_WIDERSTAND = 0.1      # Ohm
+VERSTAERKUNG = 69.0         # Verstärkungsfaktor Stromverstärker
+CS_PIN = 22                 # Chip Select Pin für DAC
 READ_ALL_AVAILABLE = -1
-MAX_DATA_POINTS = 100 # Anzahl der Punkte in der Grafik
+MAX_STROM_MA = 500.0        # Schutzschwelle in mA
+GRAPH_UPDATE_INTERVAL_MS = 500 # Update-Intervall für Graphen in Millisekunden
 
-# Konfiguration für den positiven Kanal (+)
-POS_CONFIG = {
-    "channel_name": "Positiv",
-    "dac_control_byte": 0b0011000000000000,
-    "mcc_voltage_channel": 0,
-    "mcc_current_channel": 4,
-    "shunt_resistance_ohm": 0.1,
-    "amplifier_gain": 69.0,
-    "max_current_mA": 500.0,
-    "corr_a": -0.1347, # Offset-Korrektur für Strom
-    "corr_b": 0.0780,  # Gain-Korrektur für Strom
-    "max_voltage": 10.0,
-}
+# ----------------- Globale Variablen & Datenstrukturen -----------------
+# Deques für die Speicherung der Graphendaten (zeitlich begrenzt)
+MAX_DATA_POINTS = 100
+time_points = deque(maxlen=MAX_DATA_POINTS)
+voltage_points = deque(maxlen=MAX_DATA_POINTS)
+current_points = deque(maxlen=MAX_DATA_POINTS)
 
-# Konfiguration für den negativen Kanal (-)
-NEG_CONFIG = {
-    "channel_name": "Negativ",
-    "dac_control_byte": 0b1011000000000000,
-    "mcc_voltage_channel": 0, # Annahme: Spannung wird am selben Punkt gemessen
-    "mcc_current_channel": 5,
-    "shunt_resistance_ohm": 0.1,
-    "amplifier_gain": 69.0,
-    "max_current_mA": 500.0,
-    "corr_a": -0.2793, # Offset-Korrektur für Strom
-    "corr_b": 1.7828,  # Gain-Korrektur für Strom
-    "max_voltage": -10.0,
-}
+# Globale Handles für Hardware (werden bei Start initialisiert)
+spi = None
+gpio_handle = None
+hat = None
 
+# ----------------- Hardware Initialisierung & Steuerung -----------------
+if HARDWARE_AVAILABLE:
+    # Echte Hardware-Initialisierung
+    try:
+        # SPI für DAC
+        spi = spidev.SpiDev()
+        spi.open(0, 0)
+        spi.max_speed_hz = 1000000
+        spi.mode = 0b00
 
-class PowerSupplyController:
-    """Klasse zur Kapselung der gesamten Hardware-Logik."""
-    def __init__(self):
-        self.spi = None
-        self.gpio_handle = None
-        self.hat = None
-        self.monitoring_thread = None
-        self.stop_event = threading.Event()
-        self.lock = threading.Lock()
+        # GPIO für DAC Chip Select
+        gpio_handle = lgpio.gpiochip_open(0)
+        lgpio.gpio_claim_output(gpio_handle, CS_PIN)
+        lgpio.gpio_write(gpio_handle, CS_PIN, 1)  # CS inaktiv (HIGH)
 
-        # Kalibrier- und Statusdaten
-        self.calibration_tables = {'plus': [], 'minus': []}
-        self.current_values_mA = {'plus': 0.0, 'minus': 0.0}
-        self.voltage_values_V = {'plus': 0.0, 'minus': 0.0}
-        self.dac_values = {'plus': 0, 'minus': 0}
-        self.overcurrent_flags = {'plus': False, 'minus': False}
-        self.status_message = "Initialisierung..."
-
-        if HARDWARE_AVAILABLE:
-            try:
-                self._init_hardware()
-                self.status_message = "Hardware initialisiert. Starte Kalibrierung..."
-            except Exception as e:
-                self.status_message = f"Hardware-Fehler: {e}"
-                print(self.status_message)
-        else:
-            self.status_message = "Dummy-Modus aktiv."
-
-    def _init_hardware(self):
-        # SPI
-        self.spi = spidev.SpiDev()
-        self.spi.open(0, 0)
-        self.spi.max_speed_hz = 1000000
-        self.spi.mode = 0b00
-        # GPIO
-        self.gpio_handle = lgpio.gpiochip_open(0)
-        lgpio.gpio_claim_output(self.gpio_handle, CS_PIN)
-        lgpio.gpio_write(self.gpio_handle, CS_PIN, 1)
-        # MCC118 HAT
+        # MCC 118 HAT
         address = select_hat_device(HatIDs.MCC_118)
-        self.hat = mcc118(address)
+        hat = mcc118(address)
 
-    def write_dac(self, channel_key, value):
-        if not HARDWARE_AVAILABLE: return
-        if not (0 <= value <= 4095):
-            raise ValueError("DAC-Wert muss zwischen 0 und 4095 liegen.")
+        # Scan für Stromüberwachung vorbereiten
+        scan_channels = [4] # Strommessung auf Channel 4
+        scan_channel_mask = chan_list_to_mask(scan_channels)
+        scan_rate = 1000.0
+        scan_options = OptionFlags.CONTINUOUS
+        hat.a_in_scan_start(scan_channel_mask, 0, scan_rate, scan_options)
 
-        config = POS_CONFIG if channel_key == 'plus' else NEG_CONFIG
-        control = config["dac_control_byte"]
+    except Exception as e:
+        print(f"FEHLER bei der Hardware-Initialisierung: {e}")
+        HARDWARE_AVAILABLE = False
+
+else:
+    # MOCK HARDWARE (Simulationsmodus)
+    # Diese Objekte simulieren die Hardware, wenn die Bibliotheken nicht verfügbar sind.
+    class MockSPI:
+        def xfer2(self, data): pass
+        def close(self): pass
+
+    class MockLGPIO:
+        def gpiochip_open(self, dev): return 1
+        def gpio_claim_output(self, handle, pin): pass
+        def gpio_write(self, handle, pin, level): pass
+        def gpiochip_close(self, handle): pass
+
+    class MockHAT:
+        _mock_voltage = 0.0
+        _mock_dac_value = 0
+        def a_in_read(self, channel):
+            # Simuliert eine Spannung, die vom DAC-Wert abhängt
+            return self._mock_dac_value / 4095 * 10.0 + np.random.rand() * 0.01
+
+        def a_in_scan_read(self, num_samples, timeout):
+            # Simuliert eine Strommessung (als Spannungswert)
+            from types import SimpleNamespace
+            # Simuliert einen leichten Stromfluss, der vom eingestellten Spannungswert abhängt
+            mock_shunt_voltage = (self._mock_voltage / 10.0) * 0.05 + np.random.rand() * 0.001
+            return SimpleNamespace(data=[mock_shunt_voltage])
+        
+        def a_in_scan_stop(self): pass
+
+    spi = MockSPI()
+    lgpio_mock = MockLGPIO()
+    gpio_handle = lgpio_mock.gpiochip_open(0)
+    hat = MockHAT()
+
+
+def write_dac(value):
+    """Schreibt einen 12-Bit-Wert (0-4095) an den DAC."""
+    if not (0 <= value <= 4095):
+        raise ValueError("DAC-Wert muss zwischen 0 und 4095 liegen.")
+    
+    if HARDWARE_AVAILABLE:
+        control = 0b0011000000000000
         data = control | (value & 0xFFF)
         high_byte = (data >> 8) & 0xFF
-        low_byte = data & 0xFF
-
-        with self.lock:
-            lgpio.gpio_write(self.gpio_handle, CS_PIN, 0)
-            self.spi.xfer2([high_byte, low_byte])
-            lgpio.gpio_write(self.gpio_handle, CS_PIN, 1)
-            self.dac_values[channel_key] = value
-
-    def calibrate(self, channel_key):
-        """Führt die Spannungskalibrierung für einen Kanal durch."""
-        if not HARDWARE_AVAILABLE:
-            # Dummy-Kalibrierung für den Offline-Betrieb
-            self.status_message = f"Dummy-Kalibrierung für Kanal '{channel_key}'."
-            print(self.status_message)
-            if channel_key == 'plus':
-                self.calibration_tables['plus'] = [(0.0, 0), (10.0, 4095)]
-            else:
-                self.calibration_tables['minus'] = [(-10.0, 4095), (0.0, 0)]
-            time.sleep(0.5)
-            return
-
-        self.status_message = f"Kalibriere Kanal '{channel_key}'..."
-        print(self.status_message)
-        table = []
-        config = POS_CONFIG if channel_key == 'plus' else NEG_CONFIG
-        mcc_channel = config["mcc_voltage_channel"]
-
-        try:
-            for dac_wert in range(0, 4096, 64):
-                self.write_dac(channel_key, dac_wert)
-                time.sleep(0.05)
-                spannung = self.hat.a_in_read(mcc_channel)
-                
-                is_valid = (spannung >= 0) if channel_key == 'plus' else (spannung <= 0)
-                if is_valid:
-                    table.append((spannung, dac_wert))
-            
-            # Endpunkt sicherstellen
-            self.write_dac(channel_key, 4095)
-            time.sleep(0.05)
-            spannung = self.hat.a_in_read(mcc_channel)
-            is_valid = (spannung >= 0) if channel_key == 'plus' else (spannung <= 0)
-            if is_valid:
-                table.append((spannung, 4095))
-
-            self.write_dac(channel_key, 0) # Sicherer Zustand
-            table.sort(key=lambda x: x[0])
-            self.calibration_tables[channel_key] = table
-            self.status_message = f"Kalibrierung für '{channel_key}' abgeschlossen."
-            print(self.status_message)
-        except HatError as e:
-            self.status_message = f"Hardware-Fehler bei Kalibrierung von '{channel_key}': {e}"
-            print(self.status_message)
-
-
-    def set_voltage(self, channel_key, target_voltage):
-        """Stellt die Spannung basierend auf Kalibrierdaten ein."""
-        table = self.calibration_tables[channel_key]
-        if not table:
-            self.status_message = f"Fehler: Kanal '{channel_key}' nicht kalibriert."
-            return
-
-        # Randbehandlung und Validierung
-        min_v, max_v = table[0][0], table[-1][0]
-        if not (min_v <= target_voltage <= max_v):
-             self.status_message = f"Spannung für '{channel_key}' ({target_voltage}V) außerhalb des Bereichs ({min_v:.2f}V bis {max_v:.2f}V)."
-             return
-
-        # Interpolation
-        u_vals = [p[0] for p in table]
-        dac_vals = [p[1] for p in table]
-        dac_wert = int(round(np.interp(target_voltage, u_vals, dac_vals)))
-
-        self.write_dac(channel_key, dac_wert)
-        self.voltage_values_V[channel_key] = target_voltage
-        self.overcurrent_flags[channel_key] = False # Reset flag on new set
-        self.status_message = f"Spannung '{channel_key}' auf {target_voltage:.3f} V gesetzt (DAC={dac_wert})."
-
-    def _monitoring_loop(self):
-        """Hintergrund-Thread zur kontinuierlichen Überwachung."""
-        if not HARDWARE_AVAILABLE:
-            # Dummy-Schleife
-            while not self.stop_event.is_set():
-                with self.lock:
-                    # Simuliere kleine Schwankungen
-                    self.current_values_mA['plus'] = max(0, 50 + np.random.randn() * 2) if self.dac_values['plus'] > 0 else 0
-                    self.current_values_mA['minus'] = max(0, 30 + np.random.randn() * 2) if self.dac_values['minus'] > 0 else 0
-                time.sleep(0.2)
-            return
-
-        # Echte Hardware-Schleife
-        scan_rate = 1000.0
-        options = OptionFlags.CONTINUOUS
-        channels = [POS_CONFIG['mcc_current_channel'], NEG_CONFIG['mcc_current_channel']]
-        channel_mask = chan_list_to_mask(channels)
-        
-        try:
-            self.hat.a_in_scan_start(channel_mask, 0, scan_rate, options)
-            
-            while not self.stop_event.is_set():
-                read_result = self.hat.a_in_scan_read(READ_ALL_AVAILABLE, 0.1)
-                
-                if read_result.hardware_overrun or read_result.buffer_overrun:
-                    self.status_message = "WARNUNG: MCC Hardware/Buffer Overrun."
-                    continue
-
-                if len(read_result.data) > 0:
-                    with self.lock:
-                        # Positive channel
-                        pos_v_samples = read_result.data[::2]
-                        if pos_v_samples:
-                            pos_v = pos_v_samples[-1]
-                            pos_conf = POS_CONFIG
-                            i_raw_mA = (pos_v / (pos_conf['amplifier_gain'] * pos_conf['shunt_resistance_ohm'])) * 1000.0
-                            self.current_values_mA['plus'] = pos_conf['corr_a'] + pos_conf['corr_b'] * i_raw_mA
-
-                        # Negative channel
-                        neg_v_samples = read_result.data[1::2]
-                        if neg_v_samples:
-                            neg_v = neg_v_samples[-1]
-                            neg_conf = NEG_CONFIG
-                            i_raw_mA = (neg_v / (neg_conf['amplifier_gain'] * neg_conf['shunt_resistance_ohm'])) * 1000.0
-                            self.current_values_mA['minus'] = neg_conf['corr_a'] + neg_conf['corr_b'] * i_raw_mA
-
-                        # Überstromschutz prüfen
-                        if self.current_values_mA['plus'] > pos_conf['max_current_mA'] and not self.overcurrent_flags['plus']:
-                            self.write_dac('plus', 0)
-                            self.overcurrent_flags['plus'] = True
-                            self.status_message = f"ÜBERSTROM auf Kanal 'Positiv'! Netzteil deaktiviert."
-                        
-                        if self.current_values_mA['minus'] > neg_conf['max_current_mA'] and not self.overcurrent_flags['minus']:
-                            self.write_dac('minus', 0)
-                            self.overcurrent_flags['minus'] = True
-                            self.status_message = f"ÜBERSTROM auf Kanal 'Negativ'! Netzteil deaktiviert."
-                
-                time.sleep(0.05) # Kurze Pause
-
-        except Exception as e:
-            self.status_message = f"Fehler im Monitoring: {e}"
-            print(self.status_message)
-        finally:
-            if HARDWARE_AVAILABLE and self.hat:
-                self.hat.a_in_scan_stop()
-
-    def start_monitoring(self):
-        if self.monitoring_thread is None:
-            self.stop_event.clear()
-            self.monitoring_thread = threading.Thread(target=self._monitoring_loop)
-            self.monitoring_thread.daemon = True
-            self.monitoring_thread.start()
-            self.status_message = "Stromüberwachung gestartet."
-            print(self.status_message)
-
-    def cleanup(self):
-        print("Räume auf und beende Anwendung...")
-        self.stop_event.set()
-        if self.monitoring_thread:
-            self.monitoring_thread.join(timeout=2)
-        
-        if HARDWARE_AVAILABLE and self.spi:
-            try:
-                self.write_dac('plus', 0)
-                self.write_dac('minus', 0)
-                self.spi.close()
-                lgpio.gpiochip_close(self.gpio_handle)
-                print("Hardware-Ressourcen freigegeben.")
-            except Exception as e:
-                print(f"Fehler beim Aufräumen: {e}")
-
-# ----------------- Globale Instanz und App-Setup -----------------
-controller = PowerSupplyController()
-atexit.register(controller.cleanup)
-
-# Starte Kalibrierung und Überwachung SEQUENZIELL
-def startup_sequence():
-    controller.calibrate('plus')
-    controller.calibrate('minus')
-    controller.status_message = "Bereit."
-    controller.start_monitoring()
-
-threading.Thread(target=startup_sequence).start()
-
-
-# Daten-Deques für die Graphen
-time_deque = deque(maxlen=MAX_DATA_POINTS)
-current_plus_deque = deque(maxlen=MAX_DATA_POINTS)
-current_minus_deque = deque(maxlen=MAX_DATA_POINTS)
-
-# Dash App
-app = dash.Dash(__name__, external_stylesheets=['https://codepen.io/chriddyp/pen/bWLwgP.css'])
-app.title = "Labornetzteil Steuerung"
-
-# ----------------- Dash Layout -----------------
-def create_channel_layout(channel_key, config):
-    """Erzeugt das Layout für einen einzelnen Kanal."""
-    return html.Div([
-        html.H3(f"Kanal: {config['channel_name']}"),
-        html.Div([
-            dcc.Input(
-                id=f'input-voltage-{channel_key}',
-                type='number',
-                placeholder=f"Spannung V",
-                step=0.01,
-                style={'width': '60%'}
-            ),
-            html.Button('Einstellen', id=f'button-set-voltage-{channel_key}', n_clicks=0, style={'width': '38%', 'marginLeft': '2%'}),
-        ], className='row'),
-        html.Div([
-            html.B("Akt. Spannung: "),
-            html.Span("0.000 V", id=f'display-voltage-{channel_key}')
-        ], style={'marginTop': '10px'}),
-        html.Div([
-            html.B("Akt. Strom: "),
-            html.Span("0.0 mA", id=f'display-current-{channel_key}')
-        ]),
-        html.Div([
-            html.B("Status: "),
-            html.Span("OK", id=f'display-status-{channel_key}', style={'color': 'green', 'fontWeight': 'bold'})
-        ]),
-    ], className='six columns', style={'border': '1px solid #ddd', 'padding': '15px', 'borderRadius': '5px'})
-
-app.layout = html.Div([
-    html.H1("Labornetzteil Steuerung"),
-    html.Div(id='status-bar', style={'padding': '10px', 'backgroundColor': '#f0f0f0', 'marginBottom': '10px'}),
+        low_byte  = data & 0xFF
+        lgpio.gpio_write(gpio_handle, CS_PIN, 0)
+        spi.xfer2([high_byte, low_byte])
+        lgpio.gpio_write(gpio_handle, CS_PIN, 1)
+    else: # Simulation
+        hat._mock_dac_value = value
+        hat._mock_voltage = value / 4095 * 10.0
     
-    html.Div([
-        create_channel_layout('plus', POS_CONFIG),
-        create_channel_layout('minus', NEG_CONFIG),
-    ], className='row'),
-
-    html.Div([
-        dcc.Graph(id='live-current-graph'),
-    ], style={'marginTop': '20px'}),
-
-    dcc.Interval(
-        id='interval-component',
-        interval=200,  # in Millisekunden
-        n_intervals=0
-    )
-], style={'padding': '20px'})
+    # Kurze Pause, damit die Spannung sich stabilisieren kann
+    time.sleep(0.01)
 
 
-# ----------------- Dash Callbacks -----------------
-@app.callback(
-    Output('status-bar', 'children'),
-    [Input('interval-component', 'n_intervals')]
-)
-def update_status_bar(n):
-    return f"System-Status: {controller.status_message}"
+def cleanup():
+    """Wird bei Beendigung des Skripts aufgerufen, um die Hardware sicher zurückzusetzen."""
+    print("\nAufräumen und Herunterfahren...")
+    try:
+        if HARDWARE_AVAILABLE and hat:
+            hat.a_in_scan_stop()
+        write_dac(0)
+        if HARDWARE_AVAILABLE:
+            spi.close()
+            lgpio.gpiochip_close(gpio_handle)
+        print("Hardware sicher heruntergefahren.")
+    except Exception as e:
+        print(f"Fehler beim Aufräumen: {e}")
 
-def create_set_voltage_callback(channel_key):
-    def set_voltage_callback(n_clicks, voltage):
-        if n_clicks > 0 and voltage is not None:
-            controller.set_voltage(channel_key, float(voltage))
-        return dash.no_update
-    return set_voltage_callback
-
-app.callback(
-    Output(f'button-set-voltage-plus', 'n_clicks_timestamp'), # Dummy output
-    [Input('button-set-voltage-plus', 'n_clicks')],
-    [State('input-voltage-plus', 'value')]
-)(create_set_voltage_callback('plus'))
-
-app.callback(
-    Output(f'button-set-voltage-minus', 'n_clicks_timestamp'), # Dummy output
-    [Input('button-set-voltage-minus', 'n_clicks')],
-    [State('input-voltage-minus', 'value')]
-)(create_set_voltage_callback('minus'))
+# Registriert die cleanup-Funktion, die bei Skript-Ende ausgeführt wird
+atexit.register(cleanup)
 
 
-@app.callback(
-    [Output('live-current-graph', 'figure'),
-     Output('display-voltage-plus', 'children'),
-     Output('display-current-plus', 'children'),
-     Output('display-status-plus', 'children'),
-     Output('display-status-plus', 'style'),
-     Output('display-voltage-minus', 'children'),
-     Output('display-current-minus', 'children'),
-     Output('display-status-minus', 'children'),
-     Output('display-status-minus', 'style')],
-    [Input('interval-component', 'n_intervals')]
-)
-def update_live_data(n):
-    # Daten aus dem Controller holen
-    with controller.lock:
-        current_plus = controller.current_values_mA['plus']
-        current_minus = controller.current_values_mA['minus']
-        voltage_plus = controller.voltage_values_V['plus']
-        voltage_minus = controller.voltage_values_V['minus']
-        overcurrent_plus = controller.overcurrent_flags['plus']
-        overcurrent_minus = controller.overcurrent_flags['minus']
-
-    # Daten für Graphen aktualisieren
-    time_deque.append(time.time())
-    current_plus_deque.append(current_plus)
-    current_minus_deque.append(current_minus)
-
-    # Graph erstellen
-    trace_plus = go.Scatter(
-        x=list(time_deque),
-        y=list(current_plus_deque),
-        name='Strom (+)',
-        mode='lines'
-    )
-    trace_minus = go.Scatter(
-        x=list(time_deque),
-        y=list(current_minus_deque),
-        name='Strom (-)',
-        mode='lines'
-    )
-    
-    y_axis_range = [
-        min(list(current_plus_deque) + list(current_minus_deque) + [-10]),
-        max(list(current_plus_deque) + list(current_minus_deque) + [10, POS_CONFIG['max_current_mA'] * 1.1])
-    ]
-
-    figure = {
-        'data': [trace_plus, trace_minus],
-        'layout': go.Layout(
-            title='Live Strommessung',
-            xaxis={'title': 'Zeit'},
-            yaxis={'title': 'Strom (mA)', 'range': y_axis_range},
-            showlegend=True
-        )
-    }
-
-    # Statusanzeigen aktualisieren
-    status_plus_text = "ÜBERSTROM!" if overcurrent_plus else "OK"
-    status_plus_style = {'color': 'red', 'fontWeight': 'bold'} if overcurrent_plus else {'color': 'green', 'fontWeight': 'bold'}
-    
-    status_minus_text = "ÜBERSTROM!" if overcurrent_minus else "OK"
-    status_minus_style = {'color': 'red', 'fontWeight': 'bold'} if overcurrent_minus else {'color': 'green', 'fontWeight': 'bold'}
-
-    # Formatierte Strings für die Anzeige
-    voltage_plus_str = f"{voltage_plus:.3f} V"
-    current_plus_str = f"{current_plus:.2f} mA"
-    voltage_minus_str = f"{voltage_minus:.3f} V"
-    current_minus_str = f"{current_minus:.2f} mA"
-
-    return (figure, 
-            voltage_plus_str, current_plus_str, status_plus_text, status_plus_style,
-            voltage_minus_str, current_minus_str, status_minus_text, status_minus_style)
-
-# ----------------- Server Start -----------------
 def get_ip_address():
-    """Ermittelt die lokale IP-Adresse des Hosts."""
+    """Ermittelt die lokale IP-Adresse des Rechners."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -472,10 +171,276 @@ def get_ip_address():
         s.close()
         return ip
     except Exception:
-        return '127.0.0.1'
+        return "127.0.0.1"
 
+# ----------------- Dash App Definition -----------------
+app = dash.Dash(__name__, external_stylesheets=['https://codepen.io/chriddyp/pen/bWLwgP.css'])
+app.title = "Labornetzteil Steuerung"
+
+app.layout = html.Div(style={'padding': '20px'}, children=[
+    # Titel
+    html.H1("Labornetzteil Steuerung", style={'textAlign': 'center'}),
+    
+    # Store für Kalibrierdaten und Status
+    dcc.Store(id='kalibrier-tabelle-store', storage_type='memory'),
+    dcc.Store(id='strom-korrektur-store', storage_type='memory', data={'a': -0.1347, 'b': 0.0780}),
+    dcc.Store(id='status-store', storage_type='memory', data={'output_on': False, 'overcurrent': False}),
+
+    # Haupt-Layout in zwei Spalten
+    html.Div(className='row', children=[
+        # Linke Spalte: Steuerung
+        html.Div(className='six columns', children=[
+            html.Div(style={'border': '1px solid #ddd', 'padding': '15px', 'borderRadius': '5px'}, children=[
+                html.H4("Steuerung & Kalibrierung"),
+                
+                # Spannungskalibrierung
+                html.Button('1. Spannungskalibrierung starten', id='start-kalibrierung-button', n_clicks=0, style={'width': '100%', 'marginBottom': '10px'}),
+                dcc.Loading(id="loading-kalibrierung", type="circle", children=html.Div(id='kalibrierung-status')),
+                
+                html.Hr(),
+                
+                # Spannungseinstellung
+                html.Label("2. Zielsspannung (V):"),
+                dcc.Input(id='spannung-input', type='number', min=0, max=10, step=0.01, value=0.0, style={'width': 'calc(100% - 20px)', 'marginBottom': '10px'}),
+                html.Button('Spannung setzen & Ausgang AN', id='set-spannung-button', n_clicks=0, style={'width': '100%', 'backgroundColor': '#4CAF50', 'color': 'white'}),
+                html.Button('AUSGANG AUS (Not-Aus)', id='stop-button', n_clicks=0, style={'width': '100%', 'marginTop': '10px', 'backgroundColor': '#f44336', 'color': 'white'}),
+            ]),
+            
+            html.Div(style={'border': '1px solid #ddd', 'padding': '15px', 'borderRadius': '5px', 'marginTop': '20px'}, children=[
+                html.H4("Stromkorrektur anpassen"),
+                html.P("I_true = a + b * I_mcc"),
+                html.Div(className='row', children=[
+                    html.Div(className='six columns', children=[
+                        html.Label("Offset 'a' (mA):"),
+                        dcc.Input(id='corr-a-input', type='number', value=-0.1347, step=0.0001, style={'width': 'calc(100% - 20px)'}),
+                    ]),
+                    html.Div(className='six columns', children=[
+                        html.Label("Gain 'b':"),
+                        dcc.Input(id='corr-b-input', type='number', value=0.0780, step=0.0001, style={'width': 'calc(100% - 20px)'}),
+                    ]),
+                ]),
+                html.Button('Korrektur-Parameter übernehmen', id='set-korrektur-button', n_clicks=0, style={'width': '100%', 'marginTop': '10px'}),
+            ]),
+        ]),
+        
+        # Rechte Spalte: Anzeigen
+        html.Div(className='six columns', children=[
+            html.Div(id='status-anzeige', style={'border': '2px solid #ccc', 'padding': '15px', 'borderRadius': '5px', 'textAlign': 'center', 'marginBottom': '20px'}),
+            
+            dcc.Graph(id='spannung-graph'),
+            dcc.Graph(id='strom-graph'),
+        ]),
+    ]),
+    
+    # Interval-Komponente für periodische Updates
+    dcc.Interval(
+        id='graph-update-interval',
+        interval=GRAPH_UPDATE_INTERVAL_MS,
+        n_intervals=0,
+        disabled=True # Startet deaktiviert
+    ),
+])
+
+# ----------------- Callbacks -----------------
+
+@app.callback(
+    Output('kalibrier-tabelle-store', 'data'),
+    Output('kalibrierung-status', 'children'),
+    Input('start-kalibrierung-button', 'n_clicks'),
+    prevent_initial_call=True
+)
+def kalibrieren_spannung(n_clicks):
+    """Führt die Spannungskalibrierung durch."""
+    print("Starte Spannungskalibrierung...")
+    kalibrier_tabelle = []
+    sp_step = 64  # Kleinere Schritte für schnellere Kalibrierung
+    settle_time = 0.05
+
+    for dac_wert in range(0, 4096, sp_step):
+        write_dac(dac_wert)
+        time.sleep(settle_time)
+        spannung = hat.a_in_read(0)
+        kalibrier_tabelle.append((spannung, dac_wert))
+
+    # Letzten Punkt (4095) sicherstellen
+    write_dac(4095)
+    time.sleep(settle_time)
+    spannung = hat.a_in_read(4095)
+    kalibrier_tabelle.append((spannung, 4095))
+    
+    # DAC sicher zurücksetzen
+    write_dac(0)
+    
+    # Nach Spannung sortieren
+    kalibrier_tabelle.sort(key=lambda x: x[0])
+    
+    status_text = f"Kalibrierung abgeschlossen. {len(kalibrier_tabelle)} Punkte erfasst."
+    print(status_text)
+    return {'tabelle': kalibrier_tabelle}, html.P(status_text, style={'color': 'green'})
+
+
+@app.callback(
+    Output('graph-update-interval', 'disabled'),
+    Output('status-store', 'data'),
+    Input('set-spannung-button', 'n_clicks'),
+    Input('stop-button', 'n_clicks'),
+    State('spannung-input', 'value'),
+    State('kalibrier-tabelle-store', 'data'),
+    State('status-store', 'data'),
+    prevent_initial_call=True
+)
+def steuere_ausgang(set_n_clicks, stop_n_clicks, ziel_spannung, kalibrier_data, status_data):
+    """Schaltet den Ausgang AN/AUS und setzt die Spannung."""
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return no_update, no_update
+
+    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    if button_id == 'set-spannung-button':
+        if not kalibrier_data or not kalibrier_data.get('tabelle'):
+            print("FEHLER: Bitte zuerst die Spannung kalibrieren.")
+            return no_update, no_update # Nichts tun, wenn keine Kalibrierung vorhanden ist
+        
+        kalibrier_tabelle = kalibrier_data['tabelle']
+        
+        # Lineare Interpolation
+        if ziel_spannung <= kalibrier_tabelle[0][0]:
+            dac_wert = kalibrier_tabelle[0][1]
+        elif ziel_spannung >= kalibrier_tabelle[-1][0]:
+            dac_wert = kalibrier_tabelle[-1][1]
+        else:
+            dac_wert = np.interp(ziel_spannung, [p[0] for p in kalibrier_tabelle], [p[1] for p in kalibrier_tabelle])
+
+        dac_wert = int(round(dac_wert))
+        write_dac(dac_wert)
+        print(f"Spannung gesetzt auf {ziel_spannung:.3f} V (DAC={dac_wert})")
+        
+        # Status aktualisieren und Interval aktivieren
+        status_data['output_on'] = True
+        status_data['overcurrent'] = False
+        return False, status_data
+
+    elif button_id == 'stop-button':
+        write_dac(0)
+        print("Ausgang manuell deaktiviert (Not-Aus).")
+        
+        # Status aktualisieren und Interval deaktivieren
+        status_data['output_on'] = False
+        return True, status_data
+
+    return no_update, no_update
+
+
+@app.callback(
+    Output('strom-korrektur-store', 'data'),
+    Input('set-korrektur-button', 'n_clicks'),
+    State('corr-a-input', 'value'),
+    State('corr-b-input', 'value'),
+    prevent_initial_call=True
+)
+def update_strom_korrektur(n_clicks, a, b):
+    """Aktualisiert die Korrekturparameter im Store."""
+    print(f"Neue Stromkorrektur-Parameter: a={a}, b={b}")
+    return {'a': a, 'b': b}
+
+
+@app.callback(
+    Output('spannung-graph', 'figure'),
+    Output('strom-graph', 'figure'),
+    Output('status-anzeige', 'children'),
+    Output('graph-update-interval', 'disabled', allow_duplicate=True),
+    Output('status-store', 'data', allow_duplicate=True),
+    Input('graph-update-interval', 'n_intervals'),
+    State('strom-korrektur-store', 'data'),
+    State('status-store', 'data'),
+    prevent_initial_call=True
+)
+def update_graphs_and_status(n, korrektur_data, status_data):
+    """Liest periodisch Sensordaten, aktualisiert Graphen und prüft auf Überstrom."""
+    # Aktuelle Spannung lesen (Kanal 0)
+    gemessene_spannung = hat.a_in_read(0) if HARDWARE_AVAILABLE else hat._mock_voltage + np.random.rand() * 0.02
+    
+    # Aktuellen Strom lesen (Kanal 4)
+    if HARDWARE_AVAILABLE:
+        read_result = hat.a_in_scan_read(READ_ALL_AVAILABLE, 0.1)
+        if not read_result.data:
+            return no_update, no_update, no_update, no_update, no_update
+        shunt_v = read_result.data[-1]
+        # Umrechnung von Shunt-Spannung zu Strom in mA
+        current_mcc_mA = (shunt_v / (VERSTAERKUNG * SHUNT_WIDERSTAND)) * 1000.0
+    else: # Simulation
+        read_result = hat.a_in_scan_read(0, 0)
+        shunt_v = read_result.data[-1]
+        current_mcc_mA = (shunt_v / (VERSTAERKUNG * SHUNT_WIDERSTAND)) * 1000.0
+
+    # Korrektur anwenden
+    corr_a = korrektur_data['a']
+    corr_b = korrektur_data['b']
+    current_true_mA = corr_a + corr_b * current_mcc_mA
+
+    # Daten für Graphen hinzufügen
+    current_time = time.time()
+    time_points.append(current_time)
+    voltage_points.append(gemessene_spannung)
+    current_points.append(current_true_mA)
+
+    # Überstromprüfung
+    if current_true_mA > MAX_STROM_MA:
+        write_dac(0)
+        print(f"!!! ÜBERSTROM DETEKTIERT: {current_true_mA:.1f} mA > {MAX_STROM_MA:.1f} mA !!!")
+        status_data['output_on'] = False
+        status_data['overcurrent'] = True
+        disable_interval = True
+    else:
+        disable_interval = False
+
+    # Graphen erstellen
+    voltage_fig = go.Figure(
+        data=[go.Scatter(x=list(time_points), y=list(voltage_points), mode='lines', name='Spannung')],
+        layout=go.Layout(
+            title='Gemessene Ausgangsspannung',
+            yaxis={'title': 'Spannung (V)', 'range': [min(voltage_points)-0.5, max(voltage_points)+0.5] if voltage_points else [0, 12]},
+            xaxis={'title': 'Zeit'},
+            showlegend=True
+        )
+    )
+    current_fig = go.Figure(
+        data=[go.Scatter(x=list(time_points), y=list(current_points), mode='lines', name='Strom', line={'color': 'orange'})],
+        layout=go.Layout(
+            title='Korrigierter Ausgangsstrom',
+            yaxis={'title': 'Strom (mA)', 'range': [min(current_points)-10, max(current_points)+10] if current_points else [0, MAX_STROM_MA + 50]},
+            xaxis={'title': 'Zeit'},
+            shapes=[{ # Linie für Überstromschwelle
+                'type': 'line', 'x0': time_points[0] if time_points else 0, 'y0': MAX_STROM_MA,
+                'x1': time_points[-1] if time_points else 1, 'y1': MAX_STROM_MA,
+                'line': {'color': 'red', 'width': 2, 'dash': 'dash'}
+            }],
+            showlegend=True
+        )
+    )
+    
+    # Statusanzeige aktualisieren
+    if status_data['overcurrent']:
+        status_text = f"ÜBERSTROM! ({current_true_mA:.1f} mA)"
+        status_color = '#f44336' # Rot
+    elif status_data['output_on']:
+        status_text = "Ausgang AN"
+        status_color = '#4CAF50' # Grün
+    else:
+        status_text = "Ausgang AUS"
+        status_color = '#888888' # Grau
+
+    status_div = html.Div([
+        html.H3("STATUS", style={'margin': '0 0 10px 0'}),
+        html.H4(status_text, style={'margin': '0'})
+    ], style={'backgroundColor': status_color, 'color': 'white', 'padding': '15px', 'borderRadius': '5px'})
+
+    return voltage_fig, current_fig, status_div, disable_interval, status_data
+
+
+# ----------------- Server starten -----------------
 if __name__ == '__main__':
     host_ip = get_ip_address()
-    print(f"Starte Dash Server auf http://{host_ip}:8070")
-    # KORREKTUR: app.run() statt app.run_server() verwenden
-    app.run(host=host_ip, port=8070, debug=True)
+    print(f"Dash-Server wird gestartet. Zugriff unter http://{host_ip}:8070")
+    app.run_server(host=host_ip, port=8070, debug=True)
