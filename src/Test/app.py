@@ -1,12 +1,10 @@
+
 #!/usr/bin/env python3
 """
 Web-Steuerprogramm für Labornetzteil.
 Bietet eine Flask-Weboberfläche zur Einstellung der Spannung und
 zur Überwachung des Stroms, die sowohl positive als auch negative
 Spannungen unterstützt.
-
-Der Code wurde korrigiert, um einen einzelnen DAC-Kanal für beide Modi zu verwenden
-und die Interpolationslogik für negative Spannungen zu verbessern.
 """
 
 from flask import Flask, render_template_string, request, jsonify
@@ -21,18 +19,18 @@ import threading
 from datetime import datetime
 
 # ----------------- Globale Konstanten -----------------
-SHUNT_WIDERSTAND = 0.1      # Ohm
-VERSTAERKUNG = 69.0         # Verstärkungsfaktor Stromverstärker
-DAC_VREF = 10.75            # Referenzspannung DAC (V)
-CS_PIN = 22                 # Chip Select Pin
+SHUNT_WIDERSTAND = 0.1     # Ohm
+VERSTAERKUNG = 69.0        # Verstärkungsfaktor Stromverstärker
+DAC_VREF = 10.75           # Referenzspannung DAC (V)
+CS_PIN = 22                # Chip Select Pin
 READ_ALL_AVAILABLE = -1
 
-MAX_STROM_MA = 500.0        # Überstromschutz (mA)
-MAX_SPANNUNG_NEGATIV = -10  # minimaler Wert für negative Spannung
+MAX_STROM_MA = 500.0       # Überstromschutz (mA)
+MAX_SPANNUNG_NEGATIV = -10 # minimaler Wert für negative Spannung
 
 # ----------------- Globale Zustandsvariablen -----------------
-current_mode = 'positive'   # 'positive' oder 'negative'
-kalibrier_tabelle = []      # Liste von (spannung_in_v, dac_wert)
+current_mode = 'positive'  # 'positive' oder 'negative'
+kalibrier_tabelle = []     # Liste von (spannung_in_v, dac_wert)
 corr_a = 0.0
 corr_b = 0.0
 spi = None
@@ -66,6 +64,7 @@ def init_hardware():
         print("Hardware-Initialisierung erfolgreich.")
         # Setze Initial-Korrekturwerte
         set_correction_values()
+        last_error = ""
     except Exception as e:
         last_error = f"Fehler bei der Hardware-Initialisierung: {e}"
         print(last_error)
@@ -94,68 +93,129 @@ def cleanup():
 
 # ----------------- DAC Funktionen -----------------
 def write_dac(value):
-    """Schreibt 12-bit Wert 0..4095 an DAC (MCP49xx-kompatibel)."""
+    """Schreibt 12-bit Wert 0..4095 an DAC (MCP4922-kompatibel)."""
     global dac_value, last_error
     try:
         if not (0 <= value <= 4095):
             raise ValueError("DAC-Wert muss zwischen 0 und 4095 liegen.")
         
-        # Vereinfachung: Immer DAC A verwenden.
-        # Die Spannungsanpassung erfolgt in der Kalibrierung und Interpolation.
-        control = 0b0011000000000000 # DAC A, unbuffered, 1x Gain, Active
+        # Korrigierte Control-Werte für MCP4922
+        if current_mode == 'positive':
+            # Kanal A für positive Spannung
+            control = 0b0011000000000000  # Kanal A, Puffer ein, Gain 1x, kein Shutdown
+        else: # 'negative'
+            # Kanal B für negative Spannung  
+            control = 0b1011000000000000  # Kanal B, Puffer ein, Gain 1x, kein Shutdown
         
         data = control | (value & 0xFFF)
         high_byte = (data >> 8) & 0xFF
         low_byte  = data & 0xFF
         
-        if gpio_handle != -1:
+        if gpio_handle != -1 and spi:
             lgpio.gpio_write(gpio_handle, CS_PIN, 0)
             spi.xfer2([high_byte, low_byte])
             lgpio.gpio_write(gpio_handle, CS_PIN, 1)
+        
         dac_value = value
+        print(f"DAC geschrieben: Wert={value}, Modus={current_mode}, Control=0x{control:04x}")
         last_error = ""
     except Exception as e:
         last_error = f"Fehler beim Schreiben an den DAC: {e}"
         print(last_error)
 
 # ----------------- Kalibrierung (Spannungs-Mapping) -----------------
+def get_voltage_measurement_channel():
+    """Gibt den korrekten ADC-Kanal für die Spannungsmessung zurück."""
+    # Annahme: Kanal 0 für positive Spannung, Kanal 1 für negative Spannung
+    # Passen Sie dies an Ihre Hardware-Konfiguration an
+    return 0 if current_mode == 'positive' else 1
+
+def get_dac_range():
+    """Gibt den DAC-Wertebereich für den aktuellen Modus zurück."""
+    if current_mode == 'positive':
+        return range(0, 4096, 100)  # 0 bis +10V
+    else:
+        # Für negative Spannungen könnte ein anderer Bereich nötig sein
+        # Je nach Hardware-Konfiguration
+        return range(0, 4096, 100)  # Anpassung je nach Hardware
+
 def kalibrieren():
     """
     Führt die Kalibrierung basierend auf dem aktuellen Modus durch.
-    Die Kalibrierungslogik wurde angepasst, um die korrekten DAC-Werte
-    für den negativen Modus zu finden.
+    Korrigierte Version mit verbesserter Logik für negative Spannungen.
     """
     global kalibrier_tabelle, last_error
     kalibrier_tabelle.clear()
     
-    print(f"\nStarte Kalibrierung (Modus: {current_mode})...")
-    print("-" * 30)
+    if not hat:
+        last_error = "Hardware nicht initialisiert!"
+        print(last_error)
+        return False
     
-    # Im negativen Modus kalibrieren wir in umgekehrter Reihenfolge
-    # der DAC-Werte, um die negative Spannung richtig zu erfassen.
-    dac_range = range(0, 4096, 100) if current_mode == 'positive' else range(4095, -1, -100)
-
+    print(f"\nStarte Kalibrierung (Modus: {current_mode})...")
+    
+    voltage_channel = get_voltage_measurement_channel()
+    dac_range = get_dac_range()
+    
+    print(f"Verwende ADC-Kanal {voltage_channel} für Spannungsmessung")
+    
+    gueltige_punkte = 0
+    
     for dac_wert in dac_range:
-        write_dac(dac_wert)
-        time.sleep(0.1) # Wartezeit 0.1s
-        spannung = hat.a_in_read(0)  # Channel 0 misst Ausgangsspannung
-        
-        # Speichere alle gemessenen Punkte, die nicht Null sind
-        if (current_mode == 'positive' and spannung > 0) or (current_mode == 'negative' and spannung < 0):
-             kalibrier_tabelle.append((spannung, dac_wert))
-             print(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V (gespeichert)")
-        else:
-             print(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V (ignoriert - Nullpunkt)")
+        try:
+            write_dac(dac_wert)
+            time.sleep(0.2)  # Längere Wartezeit für Stabilisierung
+            
+            spannung = hat.a_in_read(voltage_channel)
+            
+            # Verbesserte Validierungslogik
+            spannung_gueltig = False
+            
+            if current_mode == 'positive':
+                # Für positive Spannung: Spannung sollte >= 0 sein
+                # Toleranz für kleine negative Werte bei DAC=0
+                if spannung >= -0.1:  # Kleine Toleranz
+                    spannung_gueltig = True
+            else:  # 'negative'
+                # Für negative Spannung: Spannung sollte <= 0 sein
+                # Toleranz für kleine positive Werte bei DAC=0
+                if spannung <= 0.1:  # Kleine Toleranz
+                    spannung_gueltig = True
+            
+            if spannung_gueltig:
+                kalibrier_tabelle.append((spannung, dac_wert))
+                gueltige_punkte += 1
+                print(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V (gespeichert)")
+            else:
+                print(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V (ignoriert - falscher Polarität)")
+                
+        except Exception as e:
+            print(f"  Fehler bei DAC {dac_wert}: {e}")
+            continue
 
-    # Sortieren nach Spannung, um sicherzustellen, dass die Interpolation funktioniert
+    # Sortieren nach Spannung
     kalibrier_tabelle.sort(key=lambda x: x[0])
     
     # Sicher zurücksetzen
     write_dac(0)
-    print("-" * 30)
-    print("Kalibrierung abgeschlossen.")
-    if not kalibrier_tabelle:
-        last_error = "ACHTUNG: Keine gültigen Kalibrierungspunkte gefunden!"
+    
+    print(f"Kalibrierung abgeschlossen. {gueltige_punkte} gültige Punkte gefunden.")
+    
+    if gueltige_punkte < 5:  # Mindestens 5 Punkte für brauchbare Interpolation
+        last_error = f"WARNUNG: Nur {gueltige_punkte} gültige Kalibrierungspunkte gefunden! Überprüfen Sie die Hardware."
+        print(last_error)
+        return False
+    
+    # Debug-Ausgabe der Kalibrierungstabelle
+    print("Kalibrierungstabelle:")
+    for i, (u, d) in enumerate(kalibrier_tabelle[:5]):  # Erste 5 Punkte
+        print(f"  {i}: {u:8.5f} V -> DAC {d}")
+    if len(kalibrier_tabelle) > 5:
+        print(f"  ... und {len(kalibrier_tabelle)-5} weitere Punkte")
+        for i, (u, d) in enumerate(kalibrier_tabelle[-3:], len(kalibrier_tabelle)-3):  # Letzte 3 Punkte
+            print(f"  {i}: {u:8.5f} V -> DAC {d}")
+    
+    last_error = ""
     return True
 
 def spannung_zu_dac_interpoliert(ziel_spannung):
@@ -164,29 +224,63 @@ def spannung_zu_dac_interpoliert(ziel_spannung):
     """
     if not kalibrier_tabelle:
         raise ValueError("Keine Kalibrierdaten vorhanden. Bitte kalibrieren.")
-        
-    if current_mode == 'negative' and ziel_spannung > 0:
+    
+    # Validierung der Zielspannung basierend auf dem Modus
+    if current_mode == 'negative' and ziel_spannung > 0.1:  # Kleine Toleranz
         raise ValueError("Nur negative Spannungen erlaubt im negativen Modus.")
+    
+    if current_mode == 'positive' and ziel_spannung < -0.1:  # Kleine Toleranz
+        raise ValueError("Nur positive Spannungen erlaubt im positiven Modus.")
 
-    u1, d1 = kalibrier_tabelle[0]
-    u2, d2 = kalibrier_tabelle[-1]
+    # Grenzfälle
+    u_min, d_min = kalibrier_tabelle[0]
+    u_max, d_max = kalibrier_tabelle[-1]
     
-    # Sicherstellen, dass die Zielspannung innerhalb des kalibrierten Bereichs liegt
-    if ziel_spannung < u1:
-        return d1
-    if ziel_spannung > u2:
-        return d2
+    print(f"Interpolation: Ziel={ziel_spannung:.3f}V, Bereich=[{u_min:.3f}V bis {u_max:.3f}V]")
     
+    # Außerhalb des Bereichs - verwende Grenzwerte
+    if current_mode == 'positive':
+        if ziel_spannung <= u_min:
+            print(f"Zielspannung unter Minimum, verwende DAC {d_min}")
+            return d_min
+        if ziel_spannung >= u_max:
+            print(f"Zielspannung über Maximum, verwende DAC {d_max}")
+            return d_max
+    else:  # negative
+        if ziel_spannung >= u_max:  # Bei negativen Spannungen ist u_max näher an 0
+            print(f"Zielspannung über Maximum, verwende DAC {d_max}")
+            return d_max
+        if ziel_spannung <= u_min:  # u_min ist die negativste Spannung
+            print(f"Zielspannung unter Minimum, verwende DAC {d_min}")
+            return d_min
+    
+    # Lineare Interpolation zwischen benachbarten Punkten
     for i in range(len(kalibrier_tabelle) - 1):
         u1, d1 = kalibrier_tabelle[i]
         u2, d2 = kalibrier_tabelle[i + 1]
         
-        if u1 <= ziel_spannung <= u2:
-            if u2 == u1: return d1
-            dac = d1 + (d2 - d1) * (ziel_spannung - u1) / (u2 - u1)
-            return int(round(dac))
-            
-    return kalibrier_tabelle[-1][1]
+        if current_mode == 'positive':
+            if u1 <= ziel_spannung <= u2:
+                if abs(u2 - u1) < 1e-6:  # Vermeidung von Division durch Null
+                    dac = d1
+                else:
+                    dac = d1 + (d2 - d1) * (ziel_spannung - u1) / (u2 - u1)
+                dac_int = int(round(dac))
+                print(f"Interpoliert zwischen [{u1:.3f}V,DAC{d1}] und [{u2:.3f}V,DAC{d2}] -> DAC{dac_int}")
+                return dac_int
+        else:  # negative
+            if u2 <= ziel_spannung <= u1:  # Bei negativen Spannungen ist die Reihenfolge umgekehrt
+                if abs(u2 - u1) < 1e-6:  # Vermeidung von Division durch Null
+                    dac = d1
+                else:
+                    dac = d1 + (d2 - d1) * (ziel_spannung - u1) / (u2 - u1)
+                dac_int = int(round(dac))
+                print(f"Interpoliert zwischen [{u1:.3f}V,DAC{d1}] und [{u2:.3f}V,DAC{d2}] -> DAC{dac_int}")
+                return dac_int
+    
+    # Fallback (sollte nicht erreicht werden)
+    print(f"Fallback: verwende letzten DAC-Wert {d_max}")
+    return d_max
 
 # ----------------- Strommessung und Korrektur -----------------
 def set_correction_values():
@@ -198,32 +292,38 @@ def set_correction_values():
     else: # 'negative'
         corr_a = -0.279388
         corr_b = 1.782842
-
-def read_current_ma():
-    """Liest den korrigierten Stromwert vom MCC118-ADC."""
-    # MCC118 Channel 4 für positiven Strom, 5 für negativen
-    channel = 4 if current_mode == 'positive' else 5
-    v_shunt = hat.a_in_read(channel)
-    strom_ma_roh = (v_shunt / (VERSTAERKUNG * SHUNT_WIDERSTAND)) * 1000.0
-    return apply_strom_korrektur(strom_ma_roh)
+    print(f"Korrekturwerte gesetzt für {current_mode}: a={corr_a}, b={corr_b}")
 
 def apply_strom_korrektur(i_mcc):
     """Wendet die lineare Korrektur auf den MCC-Strommesswert an."""
     return corr_a + corr_b * i_mcc
+
+def read_current_ma():
+    """Liest den korrigierten Stromwert vom MCC118-ADC."""
+    try:
+        # MCC118 Channel 4 für positiven Strom, 5 für negativen
+        channel = 4 if current_mode == 'positive' else 5
+        v_shunt = hat.a_in_read(channel)
+        strom_ma_roh = (v_shunt / (VERSTAERKUNG * SHUNT_WIDERSTAND)) * 1000.0
+        return apply_strom_korrektur(strom_ma_roh)
+    except Exception as e:
+        print(f"Fehler beim Lesen des Stroms: {e}")
+        return 0.0
 
 def monitoring_loop():
     """Hintergrund-Thread für die kontinuierliche Überwachung."""
     global current_voltage, current_current_ma, last_error, monitoring_active
     while monitoring_active:
         try:
-            # Lese Ausgangsspannung von MCC118 Channel 0
-            current_voltage = hat.a_in_read(0)
+            # Lese Ausgangsspannung vom korrekten Kanal
+            voltage_channel = get_voltage_measurement_channel()
+            current_voltage = hat.a_in_read(voltage_channel)
             
             # Lese Strom und wende Korrektur an
             current_current_ma = read_current_ma()
             
             # Überstromschutz
-            if current_current_ma > MAX_STROM_MA:
+            if abs(current_current_ma) > MAX_STROM_MA:
                 print(f"ACHTUNG: Überstrom ({current_current_ma:.3f} mA)! DAC wird auf 0 gesetzt.")
                 write_dac(0)
                 last_error = f"Überstrom erkannt: {current_current_ma:.3f} mA! DAC auf 0 gesetzt."
@@ -265,21 +365,21 @@ def index():
             #message-box { min-height: 40px; }
             .message-error { background-color: #fee2e2; color: #dc2626; border: 1px solid #dc2626; padding: 0.5rem; border-radius: 0.5rem; font-weight: bold; }
             .message-info { background-color: #dbeafe; color: #1e40af; border: 1px solid #1e40af; padding: 0.5rem; border-radius: 0.5rem; font-weight: bold; }
+            .message-success { background-color: #d1fae5; color: #059669; border: 1px solid #059669; padding: 0.5rem; border-radius: 0.5rem; font-weight: bold; }
         </style>
     </head>
     <body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
         <div class="container mx-auto p-8 bg-gray-50 rounded-2xl shadow-xl">
             <h1 class="text-4xl font-bold mb-6 text-center text-gray-800">Labornetzteil Steuerung</h1>
 
-            <!-- Meldungsfeld -->
             <div id="message-box" class="mb-6"></div>
 
-            <!-- Status und Live-Daten -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 text-center">
                 <div class="card p-6">
                     <h2 class="text-2xl font-semibold mb-2 text-gray-700">Aktueller Status</h2>
                     <p class="text-gray-600">Modus: <span id="mode" class="font-bold"></span></p>
                     <p class="text-gray-600">DAC-Wert: <span id="dac_val" class="font-bold"></span></p>
+                    <p class="text-gray-600">Kalibr.-Punkte: <span id="cal_points" class="font-bold"></span></p>
                 </div>
                 <div class="card p-6">
                     <h2 class="text-2xl font-semibold mb-2 text-gray-700">Live-Messwerte</h2>
@@ -288,13 +388,11 @@ def index():
                 </div>
             </div>
 
-            <!-- Steuerungssektionen -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
 
-                <!-- Modus- und Spannungssteuerung -->
                 <div class="card p-6">
                     <h2 class="text-2xl font-semibold mb-4 text-gray-700">Spannungseinstellung</h2>
-                    <div class="space-y-4">
+                    <form id="voltage-form" class="space-y-4">
                         <div>
                             <label for="mode-select" class="block text-gray-700 font-medium">Modus wählen:</label>
                             <select id="mode-select" name="mode" class="w-full mt-1 p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
@@ -302,20 +400,18 @@ def index():
                                 <option value="negative">Negativ</option>
                             </select>
                         </div>
-                        <form id="voltage-form" class="space-y-4">
-                            <div>
-                                <label for="voltage" class="block text-gray-700 font-medium">Spannung in V:</label>
-                                <input type="number" id="voltage" name="voltage" step="0.01" class="w-full mt-1 p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500" required>
-                            </div>
-                            <button type="submit" class="btn w-full bg-blue-600 text-white p-3 rounded-md font-semibold hover:bg-blue-700">Spannung setzen</button>
-                        </form>
-                    </div>
+                        <div>
+                            <label for="voltage" class="block text-gray-700 font-medium">Spannung in V:</label>
+                            <input type="number" id="voltage" name="voltage" step="0.01" class="w-full mt-1 p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500" required>
+                        </div>
+                        <button type="submit" class="btn w-full bg-blue-600 text-white p-3 rounded-md font-semibold hover:bg-blue-700">Spannung setzen</button>
+                    </form>
                 </div>
 
-                <!-- Kalibrierung -->
                 <div class="card p-6">
                     <h2 class="text-2xl font-semibold mb-4 text-gray-700">Kalibrierung</h2>
-                    <button id="calibrate-btn" class="btn w-full bg-green-600 text-white p-3 rounded-md font-semibold hover:bg-green-700">Kalibrierung starten</button>
+                    <button id="calibrate-btn" class="btn w-full bg-green-600 text-white p-3 rounded-md font-semibold hover:bg-green-700 mb-2">Kalibrierung starten</button>
+                    <button id="reset-btn" class="btn w-full bg-red-600 text-white p-3 rounded-md font-semibold hover:bg-red-700">DAC auf 0 setzen</button>
                 </div>
             </div>
         </div>
@@ -324,7 +420,7 @@ def index():
             // Funktion zum Anzeigen von Nachrichten im Meldungsfeld
             const showMessage = (message, type = 'info') => {
                 const messageBox = document.getElementById('message-box');
-                messageBox.className = ''; // Alte Klassen entfernen
+                messageBox.className = 'mb-6'; // Basis-Klassen beibehalten
                 messageBox.textContent = '';
                 if (message) {
                     messageBox.textContent = message;
@@ -340,6 +436,7 @@ def index():
                     const data = await response.json();
                     document.getElementById('mode').textContent = data.current_mode === 'positive' ? 'Positiv' : 'Negativ';
                     document.getElementById('dac_val').textContent = data.dac_value;
+                    document.getElementById('cal_points').textContent = data.calibration_points;
                     document.getElementById('live_voltage').textContent = data.current_voltage.toFixed(3);
                     document.getElementById('live_current').textContent = data.current_current_ma.toFixed(3);
                     
@@ -349,7 +446,10 @@ def index():
                     } else if (data.calibration_needed) {
                         showMessage("Bitte kalibrieren Sie das Netzteil für den aktuellen Modus.", 'info');
                     } else {
-                        showMessage("");
+                        // Nur löschen wenn keine anderen Nachrichten angezeigt werden
+                        if (!document.getElementById('message-box').textContent.includes('erfolgreich')) {
+                            showMessage("");
+                        }
                     }
                 } catch (error) {
                     console.error('Fetch error:', error);
@@ -368,7 +468,7 @@ def index():
                 e.preventDefault();
                 showMessage("Spannung wird gesetzt...", 'info');
                 const formData = new FormData(e.target);
-                const mode = document.getElementById('mode-select').value; // Hole den Modus
+                const mode = formData.get('mode');
                 const voltage = formData.get('voltage');
                 
                 try {
@@ -381,7 +481,12 @@ def index():
                     if (result.error) {
                         showMessage(result.error, 'error');
                     } else {
-                        showMessage("Spannung erfolgreich gesetzt.", 'info');
+                        showMessage("Spannung erfolgreich gesetzt.", 'success');
+                        setTimeout(() => {
+                            if (document.getElementById('message-box').textContent.includes('erfolgreich gesetzt')) {
+                                showMessage("");
+                            }
+                        }, 3000);
                     }
                     fetchData();
                 } catch (error) {
@@ -391,31 +496,61 @@ def index():
 
             // Button für Kalibrierung
             document.getElementById('calibrate-btn').addEventListener('click', async () => {
-                const selectedMode = document.getElementById('mode-select').value;
                 showMessage("Kalibrierung wird gestartet...", 'info');
                 try {
                     const response = await fetch('/calibrate', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ mode: selectedMode })
+                        body: JSON.stringify({})
                     });
                     const result = await response.json();
                     
                     if (result.error) {
-                         showMessage(result.error, 'error');
+                        showMessage(result.error, 'error');
                     } else {
-                        showMessage("Kalibrierung erfolgreich abgeschlossen. Bitte Spannung setzen.", 'info');
+                        showMessage("Kalibrierung erfolgreich abgeschlossen.", 'success');
+                        setTimeout(() => {
+                            if (document.getElementById('message-box').textContent.includes('erfolgreich abgeschlossen')) {
+                                showMessage("");
+                            }
+                        }, 5000);
                     }
                     fetchData();
                 } catch (error) {
                     showMessage('Fehler beim Starten der Kalibrierung: ' + error.message, 'error');
                 }
             });
+            
+            // Button für Reset
+            document.getElementById('reset-btn').addEventListener('click', async () => {
+                try {
+                    const response = await fetch('/reset_dac', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({})
+                    });
+                    const result = await response.json();
+                    
+                    if (result.error) {
+                        showMessage(result.error, 'error');
+                    } else {
+                        showMessage("DAC auf 0 gesetzt.", 'success');
+                        setTimeout(() => {
+                            if (document.getElementById('message-box').textContent.includes('DAC auf 0')) {
+                                showMessage("");
+                            }
+                        }, 3000);
+                    }
+                    fetchData();
+                } catch (error) {
+                    showMessage('Fehler beim Reset: ' + error.message, 'error');
+                }
+            });
         </script>
     </body>
     </html>
     """
-    return render_template_string(html_template)
+    return render_template_string(html_template, current_mode=current_mode)
 
 @app.route('/get_data', methods=['GET'])
 def get_data():
@@ -427,63 +562,67 @@ def get_data():
         'current_voltage': current_voltage,
         'current_current_ma': current_current_ma,
         'last_error': last_error,
-        'calibration_needed': not bool(kalibrier_tabelle)
+        'calibration_points': len(kalibrier_tabelle),
+        'calibration_needed': not bool(kalibrier_tabelle),
     })
 
 @app.route('/set_voltage', methods=['POST'])
 def set_voltage():
-    """Empfängt die Spannungseinstellung und setzt den DAC."""
+    """Stellt die Spannung basierend auf dem gewählten Modus ein."""
     global current_mode, last_error
     data = request.json
-    mode = data.get('mode')
-    voltage = data.get('voltage')
+    
+    new_mode = data.get('mode')
+    target_voltage = data.get('voltage')
 
-    if mode != current_mode:
-        current_mode = mode
+    if new_mode and new_mode != current_mode:
+        print(f"Moduswechsel von '{current_mode}' zu '{new_mode}'")
+        current_mode = new_mode
         set_correction_values()
+        # Bei Moduswechsel Kalibrierungstabelle leeren, um Neukalibrierung zu erzwingen
         kalibrier_tabelle.clear()
-        last_error = f"Modus auf '{current_mode}' gewechselt. Bitte Kalibrierung erneut durchführen."
-        return jsonify({'error': last_error})
+        write_dac(0)
 
     try:
-        # Zusätzliche Validierung für den Spannungsbereich
-        if current_mode == 'positive' and voltage < 0:
-            raise ValueError("Im positiven Modus ist nur eine Spannung >= 0V erlaubt.")
-        if current_mode == 'negative' and voltage > 0:
-            raise ValueError("Im negativen Modus ist nur eine Spannung <= 0V erlaubt.")
-
-        dac = spannung_zu_dac_interpoliert(voltage)
-        write_dac(dac)
-        return jsonify({'success': True})
+        if not kalibrier_tabelle:
+            raise ValueError(f"Bitte kalibrieren Sie das System im '{current_mode}'-Modus, bevor Sie eine Spannung setzen.")
+            
+        dac_wert = spannung_zu_dac_interpoliert(target_voltage)
+        write_dac(dac_wert)
+        last_error = ""
+        return jsonify({"success": True})
     except Exception as e:
-        last_error = str(e)
-        return jsonify({'error': last_error})
+        last_error = f"Fehler beim Setzen der Spannung: {e}"
+        print(last_error)
+        return jsonify({"error": last_error}), 400
 
 @app.route('/calibrate', methods=['POST'])
-def calibrate_route():
-    """Startet die Kalibrierung im Haupt-Thread."""
-    global last_error, current_mode
-    data = request.json
-    selected_mode = data.get('mode')
-    
-    # Stellen Sie sicher, dass der Modus aktualisiert wird, bevor die Kalibrierung beginnt
-    current_mode = selected_mode 
-    set_correction_values() 
-    
+def calibrate():
+    """Führt die Kalibrierung durch."""
+    if kalibrieren():
+        return jsonify({"success": True, "message": "Kalibrierung erfolgreich."})
+    else:
+        return jsonify({"error": last_error}), 400
+
+@app.route('/reset_dac', methods=['POST'])
+def reset_dac():
+    """Setzt den DAC-Wert auf 0."""
     try:
-        kalibrieren()
-        last_error = "" 
-        return jsonify({'success': True, 'message': 'Kalibrierung gestartet.'})
+        write_dac(0)
+        global current_voltage, current_current_ma
+        current_voltage = 0.0
+        current_current_ma = 0.0
+        return jsonify({"success": True, "message": "DAC erfolgreich auf 0 gesetzt."})
     except Exception as e:
-        last_error = str(e)
-        return jsonify({'error': last_error})
+        last_error = f"Fehler beim Reset des DAC: {e}"
+        return jsonify({"error": last_error}), 400
 
-
-if __name__ == "__main__":
+# ----------------- Startpunkt -----------------
+if __name__ == '__main__':
     init_hardware()
     try:
+        # Standard-Kalibrierung für den initialen positiven Modus
+        kalibrieren()
         app.run(host='0.0.0.0', port=5000, debug=False)
-    except KeyboardInterrupt:
-        pass
     finally:
         cleanup()
