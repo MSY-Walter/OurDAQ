@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Steuerprogramm für Labornetzteil:
-- Kalibrierte Spannungs-Einstellung (MCC118 Channel 0)
+Steuerprogramm für Labornetzteil – Negative Spannung
+- Automatische Kalibrierung (MCC118 Channel 0)
 - Lineare Interpolation der Kalibrierpunkte
 - Dauerhafte Stromüberwachung (MCC118 Channel 4) in mA
 - Lineare Kalibrierkorrektur für MCC-Strommessung (Offset + Gain)
@@ -17,25 +17,21 @@ from daqhats_utils import select_hat_device, chan_list_to_mask
 
 # ----------------- Konstanten -----------------
 SHUNT_WIDERSTAND = 0.1      # Ohm
-VERSTAERKUNG = 69.0         # Verstärkungsfaktor Stromverstärker (falls du direkt mit Spannung rechnest)
-DAC_VREF = 10.75            # Referenzspannung DAC (V)
+VERSTAERKUNG = 69.0         # Verstärkungsfaktor Stromverstärker
 CS_PIN = 22                 # Chip Select Pin
 READ_ALL_AVAILABLE = -1
 
-# Schutzschwelle (in mA)
-MAX_STROM_MA = 500.0  # 0.5 A = 500 mA
+MAX_SPANNUNG_NEGATIV = -10  # minimaler Wert (negativ)
+MAX_STROM_MA = 500.0       # Überstromschutz (mA)
 
-# ----------------- Kalibrierdaten (Spannung<->DAC) -----------------
+# ----------------- Kalibrierdaten (Spannung <-> DAC) -----------------
 kalibrier_tabelle = []  # Liste von (spannung_in_v, dac_wert)
 
 # ----------------- Korrektur für MCC Strommessung -----------------
-# Anfangswerte berechnet aus deinen gelieferten Messwerten (siehe Nachricht).
-# I_true_mA = corr_a + corr_b * I_mcc_mA
-corr_a = -0.13473834089564027
-corr_b = 0.07800453738409945
+# Anfangswerte (analog zum positiven Beispiel, anpassen falls nötig)
+corr_a = -0.279388
+corr_b = 1.782842
 
-# Falls du später neu kalibrieren willst, kannst du die Funktion `kalibriere_stromkorrektur`
-# benutzen, die aus Listen von Messwerten (mcc_list, true_list) a und b berechnet.
 
 # ----------------- Hardware initialisieren -----------------
 spi = spidev.SpiDev()
@@ -44,17 +40,15 @@ spi.max_speed_hz = 1000000
 spi.mode = 0b00
 
 gpio_handle = lgpio.gpiochip_open(0)
-# Falls gpio_claim_output fehlschlägt, prüfe ob Pin bereits benutzt wird.
 lgpio.gpio_claim_output(gpio_handle, CS_PIN)
 lgpio.gpio_write(gpio_handle, CS_PIN, 1)  # CS inaktiv (HIGH)
-
 
 # ----------------- DAC Funktionen -----------------
 def write_dac(value):
     """Schreibt 12-bit Wert 0..4095 an DAC (MCP49xx-kompatibel)."""
     if not (0 <= value <= 4095):
         raise ValueError("DAC-Wert muss zwischen 0 und 4095 liegen.")
-    control = 0b0011000000000000
+    control = 0b1011000000000000
     data = control | (value & 0xFFF)
     high_byte = (data >> 8) & 0xFF
     low_byte  = data & 0xFF
@@ -62,16 +56,16 @@ def write_dac(value):
     spi.xfer2([high_byte, low_byte])
     lgpio.gpio_write(gpio_handle, CS_PIN, 1)
 
-
 # ----------------- Kalibrierung (Spannungs-Mapping) -----------------
-def kalibrieren(sp_step=256, settle=0.3):
+def kalibrieren(sp_step, settle):
     """
     Fährt DAC von 0..4095 mit Schritt sp_step, misst MCC118 Channel 0,
     und füllt kalibrier_tabelle mit (gemessene_spannung_V, dac_wert).
+    Nur negative Spannungen werden gespeichert.
     """
     global kalibrier_tabelle
     kalibrier_tabelle.clear()
-    print("\nStarte Kalibrierung (Spannungs-Mapping)...")
+    print("\nStarte Kalibrierung (Negative Spannung)...")
     address = select_hat_device(HatIDs.MCC_118)
     hat = mcc118(address)
 
@@ -79,8 +73,12 @@ def kalibrieren(sp_step=256, settle=0.3):
         write_dac(dac_wert)
         time.sleep(settle)
         spannung = hat.a_in_read(0)  # Channel 0 misst Ausgangsspannung
-        kalibrier_tabelle.append((spannung, dac_wert))
-        print(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V")
+        # Nur negative Spannungen speichern, andere ignorieren
+        if spannung <= 0:
+            kalibrier_tabelle.append((spannung, dac_wert))
+            print(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V")
+        else:
+            print(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V (nicht negativ, ignoriert)")
 
     # Sicherstellen, dass DAC 4095 auch dabei ist (falls sp_step nicht genau 1)
     if not any(dac == 4095 for _, dac in kalibrier_tabelle):
@@ -88,17 +86,15 @@ def kalibrieren(sp_step=256, settle=0.3):
         write_dac(4095)
         time.sleep(settle)
         spannung = hat.a_in_read(0)
-        if spannung >= 0:
+        if spannung <= 0:
             kalibrier_tabelle.append((spannung, 4095))
             print(f"  DAC 4095 -> {spannung:8.5f} V")
         else:
-            print(f"  DAC 4095 -> {spannung:8.5f} V (nicht positiv, ignoriert)")
+            print(f"  DAC 4095 -> {spannung:8.5f} V (nicht negativ, ignoriert)")
 
-    # Sicher zurücksetzen
     write_dac(0)
-    print("Kalibrierung (Spannung) abgeschlossen.")
-    # Sortieren nach Spannung (sicherheitshalber)
     kalibrier_tabelle.sort(key=lambda x: x[0])
+    print("Kalibrierung (Negative Spannung) abgeschlossen.")
     print(f"Gespeicherte Punkte: {len(kalibrier_tabelle)}")
 
 
@@ -106,6 +102,8 @@ def spannung_zu_dac_interpoliert(ziel_spannung):
     """Lineare Interpolation zwischen Kalibrierpunkten -> DAC-Wert (int)."""
     if not kalibrier_tabelle:
         raise RuntimeError("Keine Kalibrierdaten vorhanden. Bitte kalibrieren.")
+    if ziel_spannung > 0:
+        raise ValueError("Nur negative Spannungen erlaubt.")
     # Randbehandlung
     if ziel_spannung <= kalibrier_tabelle[0][0]:
         return kalibrier_tabelle[0][1]
@@ -123,15 +121,8 @@ def spannung_zu_dac_interpoliert(ziel_spannung):
             return int(round(dac))
     raise ValueError("Interpolation fehlgeschlagen.")
 
-
 # ----------------- Stromkorrektur Hilfsfunktionen -----------------
 def kalibriere_stromkorrektur(mcc_list_mA, true_list_mA):
-    """
-    Berechnet lineare Korrektur (a,b) aus Listen:
-    true = a + b * mcc
-    Gibt (a,b) zurück (in mA und dimensionslos).
-    Nutze diese Funktion, wenn du neue Messwerte hast.
-    """
     import numpy as np
     mcc = np.array(mcc_list_mA, dtype=float)
     true = np.array(true_list_mA, dtype=float)
@@ -139,24 +130,12 @@ def kalibriere_stromkorrektur(mcc_list_mA, true_list_mA):
     a, b = np.linalg.lstsq(A, true, rcond=None)[0]
     return float(a), float(b)
 
-
 def apply_strom_korrektur(i_mcc_mA):
-    """Wendet die lineare Korrektur auf einen MCC-Wert (mA) an."""
     return corr_a + corr_b * i_mcc_mA
-
 
 # ----------------- Stromüberwachung (kontinuierlich) -----------------
 def strom_ueberwachung(max_strom_ma=MAX_STROM_MA):
-    """
-    Startet kontinuierliche Stromüberwachung:
-    - Liest MCC118 Channel 4 (Shuntspannung), wandelt zu mA (falls du direkt Spannung nutzt),
-      oder nutzt bereits vorverarbeitete MCC-mA-Werte, je nachdem wie du read_result verwendest.
-    - Korrigiert Messwert mit apply_strom_korrektur(), zeigt mA an.
-    - Bei Überschreitung von max_strom_ma -> write_dac(0), Warnung, beendet Überwachung.
-    Bedienung: Strg+C beendet die Überwachung und kehrt ins Menü zurück.
-    """
-    # Channel 4 verwenden
-    channels = [4]
+    channels = [5]
     channel_mask = chan_list_to_mask(channels)
     num_channels = len(channels)
     scan_rate = 1000.0
@@ -173,25 +152,16 @@ def strom_ueberwachung(max_strom_ma=MAX_STROM_MA):
         while True:
             read_result = hat.a_in_scan_read(READ_ALL_AVAILABLE, 0.5)
             if len(read_result.data) >= num_channels:
-                shunt_v = read_result.data[-1]  # Spannung am Shunt (V)
-                # Falls du bisher current aus Spannung berechnest:
-                # current_a = shunt_v / (VERSTAERKUNG * SHUNT_WIDERSTAND)
-                # current_mcc_mA = current_a * 1000.0
-                # In deinem bisherigen Setup hattest du vermutlich bereits current_mcc_mA aus der gemessenen Spannung berechnet.
-                # Hier rechnen wir daher current_mcc_mA aus shunt_v:
+                shunt_v = read_result.data[-1]
                 current_mcc_mA = (shunt_v / (VERSTAERKUNG * SHUNT_WIDERSTAND)) * 1000.0
-
                 current_true_mA = apply_strom_korrektur(current_mcc_mA)
-
-                # Anzeige
                 print(f"\r{shunt_v:10.5f} V   {current_mcc_mA:7.2f} mA   {current_true_mA:9.2f} mA", end='')
 
-                # Schutz: bei Überschreitung
                 if current_true_mA > max_strom_ma:
                     write_dac(0)
                     print(f"\n\n⚠️  ÜBERSTROM: {current_true_mA:.1f} mA > {max_strom_ma:.1f} mA  -- DAC auf 0 gesetzt (Netzteil AUS).")
                     break
-            time.sleep(0.05)
+            time.sleep(0.1)
 
     except KeyboardInterrupt:
         print("\nÜberwachung beendet (Strg+C).")
@@ -201,7 +171,6 @@ def strom_ueberwachung(max_strom_ma=MAX_STROM_MA):
             hat.a_in_scan_stop()
         except Exception:
             pass
-
 
 # ----------------- Aufräumen -----------------
 def cleanup():
@@ -217,15 +186,14 @@ def cleanup():
         pass
     print("Beendet.")
 
-
 # ----------------- Hauptprogramm -----------------
 def main():
     try:
-        # Kalibrierung der Spannung (einmalig beim Start)
-        kalibrieren(sp_step=256, settle=0.3)
+        # Automatische Kalibrierung am Programmstart
+        kalibrieren(sp_step=32, settle=0.05)
 
         while True:
-            print("\n--- Hauptmenü ---")
+            print("\n--- Hauptmenü – Negatives Netzteil ---")
             print("1) Spannung einstellen (startet automatische Stromüberwachung)")
             print("2) Stromkorrektur neu berechnen (manuelle Eingabe von Messwerten)")
             print("3) Beenden")
@@ -233,17 +201,18 @@ def main():
 
             if choice == "1":
                 try:
-                    ziel = float(input("Gewünschte Spannung (V): "))
+                    ziel = float(input(f"Gewünschte Spannung ({MAX_SPANNUNG_NEGATIV:.2f} … 0 V): "))
+                    if ziel > 0 or ziel < MAX_SPANNUNG_NEGATIV:
+                        print(f"Bitte nur negative Spannung im Bereich {MAX_SPANNUNG_NEGATIV:.2f} bis 0 eingeben.")
+                        continue
                     dac = spannung_zu_dac_interpoliert(ziel)
                     write_dac(dac)
                     print(f"Spannung eingestellt: {ziel:.3f} V  (DAC={dac})")
-                    # automatische Stromüberwachung starten (endet bei Strg+C oder Überstrom)
                     strom_ueberwachung()
                 except Exception as e:
                     print(f"Fehler: {e}")
 
             elif choice == "2":
-                # Hilfsfunktion: neue Kalibriermesswerte eingeben und a,b neu berechnen
                 print("Gib paarweise MCC_mA und True_mA ein (z. B.: '6 0.328'), eine Leerzeile beendet.")
                 mccs = []
                 trues = []
