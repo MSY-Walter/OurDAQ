@@ -99,11 +99,11 @@ def write_dac(value):
         
         # Wähle den korrekten Control-Wert basierend auf dem Modus
         if current_mode == 'positive':
+            # DAC A, unbuffered, 1x Gain, Active
             control = 0b0011000000000000
-            channel = 0
         else: # 'negative'
+            # DAC B, unbuffered, 1x Gain, Active
             control = 0b1011000000000000
-            channel = 1 # MCP4922 hat 2 Kanäle, hier Kanal B für negative Spannung
         
         data = control | (value & 0xFFF)
         high_byte = (data >> 8) & 0xFF
@@ -128,18 +128,16 @@ def kalibrieren():
     global kalibrier_tabelle, last_error
     kalibrier_tabelle.clear()
     
-    # Der MCC118 DAQ HAT wird in init_hardware() global initialisiert.
-    # Kein erneuter Aufruf von select_hat_device() oder mcc118() nötig.
-    
     print(f"\nStarte Kalibrierung (Modus: {current_mode})...")
+    print("-" * 30)
     
     for dac_wert in range(0, 4096, 100): # Schrittgröße 100
         write_dac(dac_wert)
         time.sleep(0.1) # Wartezeit 0.1s
         spannung = hat.a_in_read(0)  # Channel 0 misst Ausgangsspannung
         
-        if (current_mode == 'positive' and spannung >= 0) or \
-           (current_mode == 'negative' and spannung <= 0):
+        if (current_mode == 'positive' and spannung >= -0.1) or \
+           (current_mode == 'negative' and spannung <= 0.1): # Toleranzbereich für 0V
             kalibrier_tabelle.append((spannung, dac_wert))
             print(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V (gespeichert)")
         else:
@@ -150,6 +148,7 @@ def kalibrieren():
     
     # Sicher zurücksetzen
     write_dac(0)
+    print("-" * 30)
     print("Kalibrierung abgeschlossen.")
     if not kalibrier_tabelle:
         last_error = "ACHTUNG: Keine gültigen Kalibrierungspunkte gefunden!"
@@ -199,10 +198,6 @@ def set_correction_values():
         corr_a = -0.279388
         corr_b = 1.782842
 
-def apply_strom_korrektur(i_mcc):
-    """Wendet die lineare Korrektur auf den MCC-Strommesswert an."""
-    return corr_a + corr_b * i_mcc
-
 def read_current_ma():
     """Liest den korrigierten Stromwert vom MCC118-ADC."""
     # MCC118 Channel 4 für positiven Strom, 5 für negativen
@@ -210,6 +205,10 @@ def read_current_ma():
     v_shunt = hat.a_in_read(channel)
     strom_ma_roh = (v_shunt / (VERSTAERKUNG * SHUNT_WIDERSTAND)) * 1000.0
     return apply_strom_korrektur(strom_ma_roh)
+
+def apply_strom_korrektur(i_mcc):
+    """Wendet die lineare Korrektur auf den MCC-Strommesswert an."""
+    return corr_a + corr_b * i_mcc
 
 def monitoring_loop():
     """Hintergrund-Thread für die kontinuierliche Überwachung."""
@@ -228,7 +227,6 @@ def monitoring_loop():
                 write_dac(0)
                 last_error = f"Überstrom erkannt: {current_current_ma:.3f} mA! DAC auf 0 gesetzt."
             
-            # last_error wird nur bei einem neuen Fehler überschrieben
         except Exception as e:
             last_error = f"Fehler bei der Überwachung: {e}"
             print(last_error)
@@ -295,7 +293,7 @@ def index():
                 <!-- Modus- und Spannungssteuerung -->
                 <div class="card p-6">
                     <h2 class="text-2xl font-semibold mb-4 text-gray-700">Spannungseinstellung</h2>
-                    <form id="voltage-form" class="space-y-4">
+                    <div class="space-y-4">
                         <div>
                             <label for="mode-select" class="block text-gray-700 font-medium">Modus wählen:</label>
                             <select id="mode-select" name="mode" class="w-full mt-1 p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
@@ -303,12 +301,14 @@ def index():
                                 <option value="negative">Negativ</option>
                             </select>
                         </div>
-                        <div>
-                            <label for="voltage" class="block text-gray-700 font-medium">Spannung in V:</label>
-                            <input type="number" id="voltage" name="voltage" step="0.01" class="w-full mt-1 p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500" required>
-                        </div>
-                        <button type="submit" class="btn w-full bg-blue-600 text-white p-3 rounded-md font-semibold hover:bg-blue-700">Spannung setzen</button>
-                    </form>
+                        <form id="voltage-form" class="space-y-4">
+                            <div>
+                                <label for="voltage" class="block text-gray-700 font-medium">Spannung in V:</label>
+                                <input type="number" id="voltage" name="voltage" step="0.01" class="w-full mt-1 p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500" required>
+                            </div>
+                            <button type="submit" class="btn w-full bg-blue-600 text-white p-3 rounded-md font-semibold hover:bg-blue-700">Spannung setzen</button>
+                        </form>
+                    </div>
                 </div>
 
                 <!-- Kalibrierung -->
@@ -367,7 +367,7 @@ def index():
                 e.preventDefault();
                 showMessage("Spannung wird gesetzt...", 'info');
                 const formData = new FormData(e.target);
-                const mode = formData.get('mode');
+                const mode = document.getElementById('mode-select').value; // Hole den Modus
                 const voltage = formData.get('voltage');
                 
                 try {
@@ -390,12 +390,13 @@ def index():
 
             // Button für Kalibrierung
             document.getElementById('calibrate-btn').addEventListener('click', async () => {
+                const selectedMode = document.getElementById('mode-select').value;
                 showMessage("Kalibrierung wird gestartet...", 'info');
                 try {
                     const response = await fetch('/calibrate', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({}) // Kein body notwendig, da Werte fest im Backend sind
+                        body: JSON.stringify({ mode: selectedMode })
                     });
                     const result = await response.json();
                     
@@ -413,7 +414,7 @@ def index():
     </body>
     </html>
     """
-    return render_template_string(html_template, current_mode=current_mode)
+    return render_template_string(html_template)
 
 @app.route('/get_data', methods=['GET'])
 def get_data():
@@ -454,9 +455,14 @@ def set_voltage():
 @app.route('/calibrate', methods=['POST'])
 def calibrate_route():
     """Startet die Kalibrierung im Haupt-Thread."""
-    global last_error
+    global last_error, current_mode
+    data = request.json
+    selected_mode = data.get('mode')
+    
+    current_mode = selected_mode # Modus aus dem Frontend übernehmen
+    set_correction_values() # Korrekturwerte an den neuen Modus anpassen
+    
     try:
-        # Feste Werte aus Ihrer Datei
         kalibrieren()
         last_error = "" # Fehler zurücksetzen bei Erfolg
         return jsonify({'success': True, 'message': 'Kalibrierung gestartet.'})
