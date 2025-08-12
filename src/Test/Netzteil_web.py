@@ -1,20 +1,3 @@
-Ja, selbstverständlich. Die Anwendung kann auch ohne `dash-bootstrap-components` erstellt werden, indem stattdessen Standard-HTML-Komponenten (`dash.html`) und Inline-CSS für das Styling verwendet werden.
-
-Der funktionale Kern der Anwendung und die Logik der Callbacks bleiben identisch. Lediglich das Layout wird neu aufgebaut, was zu einem schlichteren, aber genauso funktionalen Design führt.
-
-### Code ohne `dash-bootstrap-components`
-
-Hier ist die angepasste Version des Skripts. Sie können es auf dieselbe Weise wie die vorherige Version ausführen (`sudo python3 netzteil_web_app_no_bootstrap.py`).
-
-**Änderungen:**
-
-  * Alle `dbc.*` Komponenten wurden durch `html.*` oder `dcc.*` Äquivalente ersetzt.
-  * Das Layout (z.B. Spalten) und das Design (z.B. Farben, Abstände) werden nun durch `style`-Attribute direkt im Code definiert.
-  * Die Abhängigkeit von `dash-bootstrap-components` wurde entfernt. Sie müssen es also nicht installieren.
-
-<!-- end list -->
-
-```python
 #!/usr/bin/env python3
 """
 Web-Anwendung für Labornetzteil (ohne Bootstrap-Komponenten)
@@ -384,4 +367,3 @@ if __name__ == '__main__':
     host_ip = get_ip_address()
     print(f"Starte Dash Server auf http://{host_ip}:8070")
     app.run(host=host_ip, port=8070, debug=True)
-```
