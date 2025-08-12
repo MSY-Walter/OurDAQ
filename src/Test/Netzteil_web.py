@@ -422,7 +422,7 @@ if __name__ == '__main__':
         ip_address = get_ip_address()
         port = 8070
         print(f"Dash App läuft auf http://{ip_address}:{port}")
-        app.run_server(host=ip_address, port=port, debug=True)
+        app.run(host=ip_address, port=port, debug=True)
 
         # Nach dem Beenden der App aufräumen
         cleanup()
