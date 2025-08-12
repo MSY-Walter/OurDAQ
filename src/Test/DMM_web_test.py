@@ -40,6 +40,7 @@ class DashDMM:
         
         self.modus = "DC Spannung"  # Standardmodus
         self.waveform = "Sinus"  # Standard-Wellenform für AC
+        self.rect_type = "Symmetrisch" # Standard für Rechteck
         self.channel = 0
         self.configured = False  # Konfigurationsstatus
         self.recording = False  # Datenaufzeichnung für Chart
@@ -223,7 +224,7 @@ app.layout = html.Div([
                     style={'marginBottom': '15px'}
                 ),
 
-                # NEU: Wellenform-Auswahl für AC
+                # Wellenform-Container (für AC)
                 html.Div(id='waveform-container', children=[
                     html.Label('Wellenform (nur AC):', style={'fontWeight': 'bold', 'display': 'block', 'marginTop': '10px'}),
                     dcc.Dropdown(
@@ -236,7 +237,21 @@ app.layout = html.Div([
                         value='Sinus',
                         clearable=False,
                         style={'marginBottom': '15px'}
-                    )
+                    ),
+                    # NEU: Container für Rechteck-Typ
+                    html.Div(id='rect-type-container', children=[
+                        html.Label('Rechteck-Typ:', style={'fontWeight': 'bold', 'display': 'block', 'marginTop': '10px'}),
+                        dcc.Dropdown(
+                            id='rect-type-dropdown',
+                            options=[
+                                {'label': 'Symmetrisch (z.B. -5V bis +5V)', 'value': 'Symmetrisch'},
+                                {'label': 'Unipolar (z.B. 0V bis 10V)', 'value': 'Unipolar'}
+                            ],
+                            value='Symmetrisch',
+                            clearable=False,
+                            style={'marginBottom': '15px'}
+                        )
+                    ], style={'display': 'none'}) # Standardmäßig versteckt
                 ], style={'display': 'none'}), # Standardmäßig versteckt
                 
                 # Kanal
@@ -314,9 +329,22 @@ def toggle_waveform_selector(mode):
         return {'display': 'none'}
 
 @app.callback(
+    Output('rect-type-container', 'style'),
+    [Input('mode-dropdown', 'value'),
+     Input('waveform-dropdown', 'value')]
+)
+def toggle_rect_type_selector(mode, waveform):
+    """Zeigt die Auswahl für den Rechteck-Typ nur bei Bedarf an."""
+    if mode in ["AC Spannung", "AC Strom"] and waveform == 'Rechteck':
+        return {'display': 'block'}
+    return {'display': 'none'}
+
+
+@app.callback(
     [Output('mode-dropdown', 'disabled'),
      Output('channel-dropdown', 'disabled'),
      Output('waveform-dropdown', 'disabled'),
+     Output('rect-type-dropdown', 'disabled'), # NEU
      Output('config-button', 'children'),
      Output('config-button', 'style'),
      Output('start-button', 'disabled'),
@@ -325,111 +353,103 @@ def toggle_waveform_selector(mode):
     [Input('config-button', 'n_clicks')],
     [State('mode-dropdown', 'value'),
      State('channel-dropdown', 'value'),
-     State('waveform-dropdown', 'value')]
+     State('waveform-dropdown', 'value'),
+     State('rect-type-dropdown', 'value')] # NEU
 )
-def handle_configuration(n_clicks, mode, channel, waveform):
+def handle_configuration(n_clicks, mode, channel, waveform, rect_type): # NEU
     """Verwaltet die Konfiguration und Dekonfiguration des DMM."""
-    if not n_clicks:
-        return False, False, False, 'Konfigurieren', {'width': '100%', 'height': '40px', 'backgroundColor': '#3498db', 'color': 'white', 'border': 'none', 'borderRadius': '5px', 'fontWeight': 'bold', 'fontSize': '14px', 'marginTop': '15px'}, True, True, f"Status: Bereit - Keine Konfiguration{' (Simuliert)' if SIMULATION_MODE else ''}"
+    ctx = callback_context
+    if not ctx.triggered:
+        return False, False, False, False, 'Konfigurieren', {'width': '100%', 'height': '40px', 'backgroundColor': '#3498db', 'color': 'white', 'border': 'none', 'borderRadius': '5px', 'fontWeight': 'bold', 'fontSize': '14px', 'marginTop': '15px'}, True, True, f"Status: Bereit - Keine Konfiguration{' (Simuliert)' if SIMULATION_MODE else ''}"
     
     # Toggle Konfiguration
     if dmm.configured:
         # Dekonfigurieren
         dmm.stop_measurement()
-        return False, False, False, 'Konfigurieren', {'width': '100%', 'height': '40px', 'backgroundColor': '#3498db', 'color': 'white', 'border': 'none', 'borderRadius': '5px', 'fontWeight': 'bold', 'fontSize': '14px', 'marginTop': '15px'}, True, True, f"Status: Bereit - Keine Konfiguration{' (Simuliert)' if SIMULATION_MODE else ''}"
+        return False, False, False, False, 'Konfigurieren', {'width': '100%', 'height': '40px', 'backgroundColor': '#3498db', 'color': 'white', 'border': 'none', 'borderRadius': '5px', 'fontWeight': 'bold', 'fontSize': '14px', 'marginTop': '15px'}, True, True, f"Status: Bereit - Keine Konfiguration{' (Simuliert)' if SIMULATION_MODE else ''}"
     else:
         # Konfigurieren
         dmm.modus = mode
         dmm.channel = channel
         if mode in ["AC Spannung", "AC Strom"]:
             dmm.waveform = waveform
+            if waveform == 'Rechteck':
+                dmm.rect_type = rect_type # NEU
         dmm.start_measurement()
 
         status_text = f"Status: Konfiguriert - {mode} auf Kanal {channel}"
         if mode in ["AC Spannung", "AC Strom"]:
-            status_text += f" ({waveform})"
+            status_text += f" ({waveform}"
+            if waveform == 'Rechteck':
+                status_text += f" {rect_type}" # NEU
+            status_text += ")"
         status_text += f"{' (Simuliert)' if SIMULATION_MODE else ''}"
 
-        return True, True, True, 'Rekonfigurieren', {'width': '100%', 'height': '40px', 'backgroundColor': '#27ae60', 'color': 'white', 'border': 'none', 'borderRadius': '5px', 'fontWeight': 'bold', 'fontSize': '14px', 'marginTop': '15px'}, False, False, status_text
+        return True, True, True, True, 'Rekonfigurieren', {'width': '100%', 'height': '40px', 'backgroundColor': '#27ae60', 'color': 'white', 'border': 'none', 'borderRadius': '5px', 'fontWeight': 'bold', 'fontSize': '14px', 'marginTop': '15px'}, False, False, status_text
 
 @app.callback(
     Output('measurement-display', 'children'),
     Input('display-interval', 'n_intervals')
 )
 def update_display(n_intervals):
-    """
-    Aktualisiert die Messwertanzeige. Für Rechteckwellen wird die Spitzenamplitude (±V/A)
-    angezeigt, für andere Wellenformen der Effektivwert (RMS).
-    """
+    """Aktualisiert die Messwertanzeige basierend auf Modus und Wellenform."""
     if not dmm.configured:
         return '0.000000 V'
     
     display_data = dmm.get_display_data()
     wert = display_data['wert']
-    display_text = ""
-    
-    # --- DC Modi ---
+    display_value = 0.0
+    unit = dmm.mode_units[dmm.modus]
+
+    # Einheitenberechnung je nach Modus und Wellenform
     if "DC" in dmm.modus:
         display_value = wert
         if "Strom" in dmm.modus:
-            display_value /= 1.0  # Annahme: A = V / 1Ω Shunt
-        unit = dmm.mode_units[dmm.modus]
-        display_text = f"{display_value:.6f} {unit}"
-
-    # --- AC Modi ---
+            display_value /= 1.0 # Annahme: A = V / 1Ω Shunt
     elif "AC" in dmm.modus:
         peak_value = abs(wert)
         
-        # Spezielle Anzeige für Rechteckwelle (Spitzenamplitude)
-        if dmm.waveform == 'Rechteck':
-            base_unit = "A" if "Strom" in dmm.modus else "V"
-            if base_unit == "A":
-                peak_value /= 1.0 # Annahme: Ipeak = Vpeak / 1Ω Shunt
-            display_text = f"±{peak_value:.6f} {base_unit}"
-        
-        # Standard RMS-Berechnung für Sinus und Dreieck
-        else:
-            display_value = 0.0
-            strom_peak = peak_value / 1.0 # Annahme für Strom
-            
-            if dmm.waveform == 'Sinus':
+        if dmm.waveform == 'Sinus':
+            display_value = peak_value / math.sqrt(2)
+        elif dmm.waveform == 'Dreieck':
+            display_value = peak_value / math.sqrt(3)
+        elif dmm.waveform == 'Rechteck':
+            # NEUE Logik für Rechteck
+            if dmm.rect_type == 'Symmetrisch':
+                display_value = peak_value
+            else: # Unipolar
                 display_value = peak_value / math.sqrt(2)
-                if "Strom" in dmm.modus:
-                    display_value = strom_peak / math.sqrt(2)
-            elif dmm.waveform == 'Dreieck':
-                display_value = peak_value / math.sqrt(3)
-                if "Strom" in dmm.modus:
-                    display_value = strom_peak / math.sqrt(3)
-            
-            unit = dmm.mode_units[dmm.modus]
-            display_text = f"{display_value:.6f} {unit}"
-            
+
+        if "Strom" in dmm.modus:
+             display_value /= 1.0 # Annahme: I_rms = V_rms / 1Ω Shunt
+    
+    display_text = f"{display_value:.6f} {unit}"
+    
     return display_text
 
-def calculate_rms_value(wert, modus, waveform):
+def calculate_rms_value(wert, modus, waveform, rect_type):
     """Hilfsfunktion zur Berechnung des RMS-Wertes für das Diagramm."""
     display_value = 0.0
-    if modus == "DC Spannung":
+    if "DC" in modus:
         display_value = wert
-    elif modus == "AC Spannung":
+        if "Strom" in modus:
+            display_value /= 1.0 # Annahme: A = V / 1Ω Shunt
+    elif "AC" in modus:
         peak_value = abs(wert)
+        
         if waveform == 'Sinus':
             display_value = peak_value / math.sqrt(2)
         elif waveform == 'Dreieck':
             display_value = peak_value / math.sqrt(3)
         elif waveform == 'Rechteck':
-            display_value = peak_value
-    elif modus == "DC Strom":
-        display_value = wert / 1.0  # Annahme: A = V / 1Ω Shunt
-    elif modus == "AC Strom":
-        peak_value = abs(wert)
-        strom_peak = peak_value / 1.0  # Annahme: Ipeak = Vpeak / 1Ω Shunt
-        if waveform == 'Sinus':
-            display_value = strom_peak / math.sqrt(2)
-        elif waveform == 'Dreieck':
-            display_value = strom_peak / math.sqrt(3)
-        elif waveform == 'Rechteck':
-            display_value = strom_peak
+            # NEUE Logik für Rechteck
+            if rect_type == 'Symmetrisch':
+                display_value = peak_value
+            else: # Unipolar
+                display_value = peak_value / math.sqrt(2)
+
+        if "Strom" in modus:
+             display_value /= 1.0 # Annahme: I_rms = V_rms / 1Ω Shunt
     return display_value
 
 @app.callback(
@@ -456,7 +476,10 @@ def handle_recording(start_clicks, pause_clicks, stop_clicks):
     
     status_text = f"Status: Aufzeichnung läuft - {dmm.modus} auf Kanal {dmm.channel}"
     if dmm.modus in ["AC Spannung", "AC Strom"]:
-        status_text += f" ({dmm.waveform})"
+        status_text += f" ({dmm.waveform}"
+        if dmm.waveform == 'Rechteck':
+            status_text += f" {dmm.rect_type}"
+        status_text += ")"
     status_text += f"{' (Simuliert)' if SIMULATION_MODE else ''}"
     
     if trigger_id == 'start-button' and start_clicks:
@@ -498,7 +521,7 @@ def update_chart(n):
     
     if x_data and y_data:
         # Datenkonvertierung basierend auf Modus und Wellenform
-        converted_y_data = [calculate_rms_value(wert, dmm.modus, dmm.waveform) for wert in y_data]
+        converted_y_data = [calculate_rms_value(wert, dmm.modus, dmm.waveform, dmm.rect_type) for wert in y_data]
         
         fig.add_trace(go.Scatter(x=x_data, y=converted_y_data, mode='lines+markers', name=dmm.modus, line=dict(color='#00ff00', width=2), marker=dict(size=3)))
         
@@ -515,6 +538,8 @@ def update_chart(n):
     chart_title = f'{dmm.modus}-Verlauf (Kanal {dmm.channel})'
     if dmm.modus in ["AC Spannung", "AC Strom"]:
         chart_title += f" - {dmm.waveform}"
+        if dmm.waveform == 'Rechteck':
+            chart_title += f" ({dmm.rect_type})"
 
     fig.update_layout(title=chart_title, xaxis_title='Zeit (s)', yaxis_title=y_title, showlegend=False, plot_bgcolor='white', paper_bgcolor='white', margin=dict(l=50, r=50, t=50, b=50), yaxis=dict(range=y_axis_range))
     
