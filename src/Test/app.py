@@ -4,6 +4,9 @@ Web-Steuerprogramm für Labornetzteil.
 Bietet eine Flask-Weboberfläche zur Einstellung der Spannung und
 zur Überwachung des Stroms, die sowohl positive als auch negative
 Spannungen unterstützt.
+
+Der Code wurde korrigiert, um einen einzelnen DAC-Kanal für beide Modi zu verwenden
+und die Interpolationslogik für negative Spannungen zu verbessern.
 """
 
 from flask import Flask, render_template_string, request, jsonify
@@ -97,13 +100,9 @@ def write_dac(value):
         if not (0 <= value <= 4095):
             raise ValueError("DAC-Wert muss zwischen 0 und 4095 liegen.")
         
-        # Wähle den korrekten Control-Wert basierend auf dem Modus
-        if current_mode == 'positive':
-            # DAC A, unbuffered, 1x Gain, Active
-            control = 0b0011000000000000
-        else: # 'negative'
-            # DAC B, unbuffered, 1x Gain, Active
-            control = 0b1011000000000000
+        # Vereinfachung: Immer DAC A verwenden.
+        # Die Spannungsanpassung erfolgt in der Kalibrierung und Interpolation.
+        control = 0b0011000000000000 # DAC A, unbuffered, 1x Gain, Active
         
         data = control | (value & 0xFFF)
         high_byte = (data >> 8) & 0xFF
@@ -123,7 +122,8 @@ def write_dac(value):
 def kalibrieren():
     """
     Führt die Kalibrierung basierend auf dem aktuellen Modus durch.
-    Die Kalibrierungslogik ist identisch mit Ihren ursprünglichen Dateien.
+    Die Kalibrierungslogik wurde angepasst, um die korrekten DAC-Werte
+    für den negativen Modus zu finden.
     """
     global kalibrier_tabelle, last_error
     kalibrier_tabelle.clear()
@@ -131,19 +131,23 @@ def kalibrieren():
     print(f"\nStarte Kalibrierung (Modus: {current_mode})...")
     print("-" * 30)
     
-    for dac_wert in range(0, 4096, 100): # Schrittgröße 100
+    # Im negativen Modus kalibrieren wir in umgekehrter Reihenfolge
+    # der DAC-Werte, um die negative Spannung richtig zu erfassen.
+    dac_range = range(0, 4096, 100) if current_mode == 'positive' else range(4095, -1, -100)
+
+    for dac_wert in dac_range:
         write_dac(dac_wert)
         time.sleep(0.1) # Wartezeit 0.1s
         spannung = hat.a_in_read(0)  # Channel 0 misst Ausgangsspannung
         
-        if (current_mode == 'positive' and spannung >= -0.1) or \
-           (current_mode == 'negative' and spannung <= 0.1): # Toleranzbereich für 0V
-            kalibrier_tabelle.append((spannung, dac_wert))
-            print(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V (gespeichert)")
+        # Speichere alle gemessenen Punkte, die nicht Null sind
+        if (current_mode == 'positive' and spannung > 0) or (current_mode == 'negative' and spannung < 0):
+             kalibrier_tabelle.append((spannung, dac_wert))
+             print(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V (gespeichert)")
         else:
-            print(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V (ignoriert)")
+             print(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V (ignoriert - Nullpunkt)")
 
-    # Sortieren nach Spannung
+    # Sortieren nach Spannung, um sicherzustellen, dass die Interpolation funktioniert
     kalibrier_tabelle.sort(key=lambda x: x[0])
     
     # Sicher zurücksetzen
@@ -167,20 +171,17 @@ def spannung_zu_dac_interpoliert(ziel_spannung):
     u1, d1 = kalibrier_tabelle[0]
     u2, d2 = kalibrier_tabelle[-1]
     
-    if (current_mode == 'positive' and ziel_spannung <= u1) or \
-       (current_mode == 'negative' and ziel_spannung >= u1):
+    # Sicherstellen, dass die Zielspannung innerhalb des kalibrierten Bereichs liegt
+    if ziel_spannung < u1:
         return d1
-    
-    if (current_mode == 'positive' and ziel_spannung >= u2) or \
-       (current_mode == 'negative' and ziel_spannung <= u2):
+    if ziel_spannung > u2:
         return d2
     
     for i in range(len(kalibrier_tabelle) - 1):
         u1, d1 = kalibrier_tabelle[i]
         u2, d2 = kalibrier_tabelle[i + 1]
         
-        if (current_mode == 'positive' and u1 <= ziel_spannung <= u2) or \
-           (current_mode == 'negative' and u2 <= ziel_spannung <= u1):
+        if u1 <= ziel_spannung <= u2:
             if u2 == u1: return d1
             dac = d1 + (d2 - d1) * (ziel_spannung - u1) / (u2 - u1)
             return int(round(dac))
@@ -445,6 +446,12 @@ def set_voltage():
         return jsonify({'error': last_error})
 
     try:
+        # Zusätzliche Validierung für den Spannungsbereich
+        if current_mode == 'positive' and voltage < 0:
+            raise ValueError("Im positiven Modus ist nur eine Spannung >= 0V erlaubt.")
+        if current_mode == 'negative' and voltage > 0:
+            raise ValueError("Im negativen Modus ist nur eine Spannung <= 0V erlaubt.")
+
         dac = spannung_zu_dac_interpoliert(voltage)
         write_dac(dac)
         return jsonify({'success': True})
@@ -459,12 +466,13 @@ def calibrate_route():
     data = request.json
     selected_mode = data.get('mode')
     
-    current_mode = selected_mode # Modus aus dem Frontend übernehmen
-    set_correction_values() # Korrekturwerte an den neuen Modus anpassen
+    # Stellen Sie sicher, dass der Modus aktualisiert wird, bevor die Kalibrierung beginnt
+    current_mode = selected_mode 
+    set_correction_values() 
     
     try:
         kalibrieren()
-        last_error = "" # Fehler zurücksetzen bei Erfolg
+        last_error = "" 
         return jsonify({'success': True, 'message': 'Kalibrierung gestartet.'})
     except Exception as e:
         last_error = str(e)
