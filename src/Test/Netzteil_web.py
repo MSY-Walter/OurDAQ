@@ -25,7 +25,7 @@ import numpy as np
 try:
     import spidev
     import lgpio
-    from daqhats import mcc118, OptionFlags, HatIDs
+    from daqhats import mcc118, OptionFlags, HatIDs, HatError
     from daqhats_utils import select_hat_device, chan_list_to_mask
     HARDWARE_AVAILABLE = True
 except (ImportError, RuntimeError) as e:
@@ -89,7 +89,7 @@ class PowerSupplyController:
         if HARDWARE_AVAILABLE:
             try:
                 self._init_hardware()
-                self.status_message = "Hardware initialisiert."
+                self.status_message = "Hardware initialisiert. Starte Kalibrierung..."
             except Exception as e:
                 self.status_message = f"Hardware-Fehler: {e}"
                 print(self.status_message)
@@ -132,40 +132,47 @@ class PowerSupplyController:
         if not HARDWARE_AVAILABLE:
             # Dummy-Kalibrierung für den Offline-Betrieb
             self.status_message = f"Dummy-Kalibrierung für Kanal '{channel_key}'."
+            print(self.status_message)
             if channel_key == 'plus':
                 self.calibration_tables['plus'] = [(0.0, 0), (10.0, 4095)]
             else:
                 self.calibration_tables['minus'] = [(-10.0, 4095), (0.0, 0)]
-            time.sleep(1)
-            self.status_message = "Bereit."
+            time.sleep(0.5)
             return
 
         self.status_message = f"Kalibriere Kanal '{channel_key}'..."
+        print(self.status_message)
         table = []
         config = POS_CONFIG if channel_key == 'plus' else NEG_CONFIG
         mcc_channel = config["mcc_voltage_channel"]
 
-        for dac_wert in range(0, 4096, 64):
-            self.write_dac(channel_key, dac_wert)
+        try:
+            for dac_wert in range(0, 4096, 64):
+                self.write_dac(channel_key, dac_wert)
+                time.sleep(0.05)
+                spannung = self.hat.a_in_read(mcc_channel)
+                
+                is_valid = (spannung >= 0) if channel_key == 'plus' else (spannung <= 0)
+                if is_valid:
+                    table.append((spannung, dac_wert))
+            
+            # Endpunkt sicherstellen
+            self.write_dac(channel_key, 4095)
             time.sleep(0.05)
             spannung = self.hat.a_in_read(mcc_channel)
-            
             is_valid = (spannung >= 0) if channel_key == 'plus' else (spannung <= 0)
             if is_valid:
-                table.append((spannung, dac_wert))
-        
-        # Endpunkt sicherstellen
-        self.write_dac(channel_key, 4095)
-        time.sleep(0.05)
-        spannung = self.hat.a_in_read(mcc_channel)
-        is_valid = (spannung >= 0) if channel_key == 'plus' else (spannung <= 0)
-        if is_valid:
-            table.append((spannung, 4095))
+                table.append((spannung, 4095))
 
-        self.write_dac(channel_key, 0) # Sicherer Zustand
-        table.sort(key=lambda x: x[0])
-        self.calibration_tables[channel_key] = table
-        self.status_message = f"Kalibrierung für '{channel_key}' abgeschlossen."
+            self.write_dac(channel_key, 0) # Sicherer Zustand
+            table.sort(key=lambda x: x[0])
+            self.calibration_tables[channel_key] = table
+            self.status_message = f"Kalibrierung für '{channel_key}' abgeschlossen."
+            print(self.status_message)
+        except HatError as e:
+            self.status_message = f"Hardware-Fehler bei Kalibrierung von '{channel_key}': {e}"
+            print(self.status_message)
+
 
     def set_voltage(self, channel_key, target_voltage):
         """Stellt die Spannung basierend auf Kalibrierdaten ein."""
@@ -175,14 +182,10 @@ class PowerSupplyController:
             return
 
         # Randbehandlung und Validierung
-        if channel_key == 'plus':
-            if not (table[0][0] <= target_voltage <= table[-1][0]):
-                 self.status_message = f"Spannung für '{channel_key}' außerhalb des kalibrierten Bereichs."
-                 return
-        else: # minus
-             if not (table[0][0] <= target_voltage <= table[-1][0]):
-                 self.status_message = f"Spannung für '{channel_key}' außerhalb des kalibrierten Bereichs."
-                 return
+        min_v, max_v = table[0][0], table[-1][0]
+        if not (min_v <= target_voltage <= max_v):
+             self.status_message = f"Spannung für '{channel_key}' ({target_voltage}V) außerhalb des Bereichs ({min_v:.2f}V bis {max_v:.2f}V)."
+             return
 
         # Interpolation
         u_vals = [p[0] for p in table]
@@ -225,16 +228,20 @@ class PowerSupplyController:
                 if len(read_result.data) > 0:
                     with self.lock:
                         # Positive channel
-                        pos_v = read_result.data[::2][-1] # Letzter Wert für Kanal 0 der Liste
-                        pos_conf = POS_CONFIG
-                        i_raw_mA = (pos_v / (pos_conf['amplifier_gain'] * pos_conf['shunt_resistance_ohm'])) * 1000.0
-                        self.current_values_mA['plus'] = pos_conf['corr_a'] + pos_conf['corr_b'] * i_raw_mA
+                        pos_v_samples = read_result.data[::2]
+                        if pos_v_samples:
+                            pos_v = pos_v_samples[-1]
+                            pos_conf = POS_CONFIG
+                            i_raw_mA = (pos_v / (pos_conf['amplifier_gain'] * pos_conf['shunt_resistance_ohm'])) * 1000.0
+                            self.current_values_mA['plus'] = pos_conf['corr_a'] + pos_conf['corr_b'] * i_raw_mA
 
                         # Negative channel
-                        neg_v = read_result.data[1::2][-1] # Letzter Wert für Kanal 1 der Liste
-                        neg_conf = NEG_CONFIG
-                        i_raw_mA = (neg_v / (neg_conf['amplifier_gain'] * neg_conf['shunt_resistance_ohm'])) * 1000.0
-                        self.current_values_mA['minus'] = neg_conf['corr_a'] + neg_conf['corr_b'] * i_raw_mA
+                        neg_v_samples = read_result.data[1::2]
+                        if neg_v_samples:
+                            neg_v = neg_v_samples[-1]
+                            neg_conf = NEG_CONFIG
+                            i_raw_mA = (neg_v / (neg_conf['amplifier_gain'] * neg_conf['shunt_resistance_ohm'])) * 1000.0
+                            self.current_values_mA['minus'] = neg_conf['corr_a'] + neg_conf['corr_b'] * i_raw_mA
 
                         # Überstromschutz prüfen
                         if self.current_values_mA['plus'] > pos_conf['max_current_mA'] and not self.overcurrent_flags['plus']:
@@ -251,8 +258,9 @@ class PowerSupplyController:
 
         except Exception as e:
             self.status_message = f"Fehler im Monitoring: {e}"
+            print(self.status_message)
         finally:
-            if HARDWARE_AVAILABLE:
+            if HARDWARE_AVAILABLE and self.hat:
                 self.hat.a_in_scan_stop()
 
     def start_monitoring(self):
@@ -262,6 +270,7 @@ class PowerSupplyController:
             self.monitoring_thread.daemon = True
             self.monitoring_thread.start()
             self.status_message = "Stromüberwachung gestartet."
+            print(self.status_message)
 
     def cleanup(self):
         print("Räume auf und beende Anwendung...")
@@ -283,11 +292,15 @@ class PowerSupplyController:
 controller = PowerSupplyController()
 atexit.register(controller.cleanup)
 
-# Starte Kalibrierung und Überwachung im Hintergrund
-if HARDWARE_AVAILABLE:
-    threading.Thread(target=controller.calibrate, args=('plus',)).start()
-    threading.Thread(target=controller.calibrate, args=('minus',)).start()
-controller.start_monitoring()
+# Starte Kalibrierung und Überwachung SEQUENZIELL
+def startup_sequence():
+    controller.calibrate('plus')
+    controller.calibrate('minus')
+    controller.status_message = "Bereit."
+    controller.start_monitoring()
+
+threading.Thread(target=startup_sequence).start()
+
 
 # Daten-Deques für die Graphen
 time_deque = deque(maxlen=MAX_DATA_POINTS)
@@ -307,7 +320,7 @@ def create_channel_layout(channel_key, config):
             dcc.Input(
                 id=f'input-voltage-{channel_key}',
                 type='number',
-                placeholder=f"Spannung V ({config['max_voltage']} bis 0)",
+                placeholder=f"Spannung V",
                 step=0.01,
                 style={'width': '60%'}
             ),
@@ -364,13 +377,13 @@ def create_set_voltage_callback(channel_key):
     return set_voltage_callback
 
 app.callback(
-    Output('input-voltage-plus', 'value'), # Dummy output
+    Output(f'button-set-voltage-plus', 'n_clicks_timestamp'), # Dummy output
     [Input('button-set-voltage-plus', 'n_clicks')],
     [State('input-voltage-plus', 'value')]
 )(create_set_voltage_callback('plus'))
 
 app.callback(
-    Output('input-voltage-minus', 'value'), # Dummy output
+    Output(f'button-set-voltage-minus', 'n_clicks_timestamp'), # Dummy output
     [Input('button-set-voltage-minus', 'n_clicks')],
     [State('input-voltage-minus', 'value')]
 )(create_set_voltage_callback('minus'))
@@ -416,12 +429,18 @@ def update_live_data(n):
         name='Strom (-)',
         mode='lines'
     )
+    
+    y_axis_range = [
+        min(list(current_plus_deque) + list(current_minus_deque) + [-10]),
+        max(list(current_plus_deque) + list(current_minus_deque) + [10, POS_CONFIG['max_current_mA'] * 1.1])
+    ]
+
     figure = {
         'data': [trace_plus, trace_minus],
         'layout': go.Layout(
             title='Live Strommessung',
             xaxis={'title': 'Zeit'},
-            yaxis={'title': 'Strom (mA)', 'range': [min(list(current_plus_deque) + list(current_minus_deque) + [-10]), max(list(current_plus_deque) + list(current_minus_deque) + [10, POS_CONFIG['max_current_mA'] * 1.1])]},
+            yaxis={'title': 'Strom (mA)', 'range': y_axis_range},
             showlegend=True
         )
     }
@@ -458,4 +477,5 @@ def get_ip_address():
 if __name__ == '__main__':
     host_ip = get_ip_address()
     print(f"Starte Dash Server auf http://{host_ip}:8070")
-    app.run_server(host=host_ip, port=8070, debug=True)
+    # KORREKTUR: app.run() statt app.run_server() verwenden
+    app.run(host=host_ip, port=8070, debug=True)
