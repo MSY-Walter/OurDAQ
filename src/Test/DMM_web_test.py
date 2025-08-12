@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Web-basierter Digitaler Multimeter mit erweiterter Simulation
+Web-basierter Digitaler Multimeter mit erweiterter Wellenform-Auswahl
 """
 
 import os
@@ -16,6 +16,7 @@ import threading
 from collections import deque
 import socket
 import random
+import math
 
 # Werkzeug und Flask Logging unterdrücken
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
@@ -38,10 +39,8 @@ class DashDMM:
             self.init_mcc118()
         
         self.modus = "DC Spannung"  # Standardmodus
+        self.waveform = "Sinus"  # Standard-Wellenform für AC
         self.channel = 0
-        self.signal_type = 'symmetrisch' # NEU: Für Simulation
-        self.sim_state = True # NEU: Zustand für Rechtecksignal-Generator
-        
         self.configured = False  # Konfigurationsstatus
         self.recording = False  # Datenaufzeichnung für Chart
         self.paused = False
@@ -128,21 +127,9 @@ class DashDMM:
         """Hauptschleife für kontinuierliche Messungen"""
         while self.running:
             try:
-                wert = 0.0
                 if SIMULATION_MODE or not self.hat:
-                    # NEU: Simulation mit Rechtecksignal statt Zufallswerten
-                    # Fügt eine kleine zufällige Abweichung hinzu, um realistischer zu wirken
-                    noise = random.uniform(-0.05, 0.05)
-                    if self.signal_type == 'symmetrisch':
-                        wert = (5.0 if self.sim_state else -5.0) + noise
-                    else:  # asymmetrisch
-                        wert = (10.0 if self.sim_state else 0.0) + noise
-                    
-                    # Zustand für nächsten Durchlauf wechseln (ca. alle 200ms)
-                    if int(time.time() * 5) % 2 == 0:
-                        self.sim_state = True
-                    else:
-                        self.sim_state = False
+                    # Simulation mit Zufallswerten
+                    wert = random.uniform(-5, 5)
                 else:
                     wert = self.hat.a_in_read(self.channel, OptionFlags.DEFAULT)
                 
@@ -232,8 +219,26 @@ app.layout = html.Div([
                         {'label': 'AC Strom', 'value': 'AC Strom'}
                     ],
                     value='DC Spannung',
+                    clearable=False,
                     style={'marginBottom': '15px'}
                 ),
+
+                # Wellenform-Auswahl für AC
+                html.Div(id='waveform-container', children=[
+                    html.Label('Wellenform (nur AC):', style={'fontWeight': 'bold', 'display': 'block', 'marginTop': '10px'}),
+                    dcc.Dropdown(
+                        id='waveform-dropdown',
+                        options=[
+                            {'label': 'Sinus', 'value': 'Sinus'},
+                            {'label': 'Dreieck', 'value': 'Dreieck'},
+                            {'label': 'Rechteck (symmetrisch)', 'value': 'Rechteck (symmetrisch)'},
+                            {'label': 'Rechteck (asymmetrisch)', 'value': 'Rechteck (asymmetrisch)'}
+                        ],
+                        value='Sinus',
+                        clearable=False,
+                        style={'marginBottom': '15px'}
+                    )
+                ], style={'display': 'none'}), # Standardmäßig versteckt
                 
                 # Kanal
                 html.Label('Aktiver Kanal:', style={'fontWeight': 'bold', 'display': 'block', 'marginTop': '10px'}),
@@ -241,21 +246,8 @@ app.layout = html.Div([
                     id='channel-dropdown',
                     options=[{'label': f'Kanal {i}', 'value': i} for i in range(8)],
                     value=0,
+                    clearable=False,
                     style={'marginBottom': '15px'}
-                ),
-                
-                # NEU: Signalart für Simulation
-                html.Label('Signalart (Simulation):', style={'fontWeight': 'bold', 'display': 'block', 'marginTop': '10px'}),
-                dcc.RadioItems(
-                    id='signal-type-radio',
-                    options=[
-                        {'label': 'Symmetrisch (+/- 5V)', 'value': 'symmetrisch'},
-                        {'label': 'Asymmetrisch (0-10V)', 'value': 'asymmetrisch'},
-                    ],
-                    value='symmetrisch',
-                    style={'marginBottom': '15px'},
-                    inputStyle={"margin-right": "5px"},
-                    labelStyle={'display': 'inline-block', 'margin-right': '20px'}
                 ),
                 
                 # Konfigurationsbutton
@@ -277,6 +269,7 @@ app.layout = html.Div([
                 html.Button('Pause', id='pause-button', disabled=True, style={'width': '100%', 'height': '35px', 'backgroundColor': '#f39c12', 'color': 'white', 'border': 'none', 'borderRadius': '5px', 'fontWeight': 'bold', 'marginBottom': '10px'}),
                 html.Button('Stop', id='stop-button', disabled=True, style={'width': '100%', 'height': '35px', 'backgroundColor': '#e74c3c', 'color': 'white', 'border': 'none', 'borderRadius': '5px', 'fontWeight': 'bold', 'marginBottom': '15px'}),
                 html.Button('CSV Export', id='csv-button', disabled=True, style={'width': '100%', 'height': '35px', 'backgroundColor': '#95a5a6', 'color': 'white', 'border': 'none', 'borderRadius': '5px', 'fontWeight': 'bold'}),
+
             ], style={'backgroundColor': '#ecf0f1', 'padding': '20px', 'borderRadius': '8px'}),
             
         ], style={'width': '300px', 'float': 'left', 'marginRight': '20px'}),
@@ -286,16 +279,18 @@ app.layout = html.Div([
             # Messwert Display
             html.Div([
                 html.Div(id='measurement-display',
-                        style={'backgroundColor': '#000', 'color': '#00ff00', 'padding': '30px', 'borderRadius': '8px', 'textAlign': 'center', 'minHeight': '40px', 'fontSize': '48px', 'fontWeight': 'bold', 'fontFamily': 'Courier New', 'marginBottom': '20px', 'border': '2px solid #00ff00'},
-                        children='0.000000 V DC'),
+                        style={'backgroundColor': '#000', 'color': '#00ff00', 'padding': '30px',
+                               'borderRadius': '8px', 'textAlign': 'center', 'minHeight': '40px',
+                               'fontSize': '48px', 'fontWeight': 'bold', 'fontFamily': 'Courier New',
+                               'marginBottom': '20px', 'border': '2px solid #00ff00'},
+                        children='0.000000 V'),
             ]),
             
             # Diagramm
             dcc.Graph(id='measurement-chart', config={'displayModeBar': False}, style={'height': '400px', 'border': '1px solid #bdc3c7', 'borderRadius': '8px'}),
             
             # Status
-            html.Div(id='status-display',
-                    style={'backgroundColor': '#34495e', 'color': 'white', 'padding': '10px', 'borderRadius': '5px', 'fontWeight': 'bold', 'marginTop': '15px'},
+            html.Div(id='status-display', style={'backgroundColor': '#34495e', 'color': 'white', 'padding': '10px', 'borderRadius': '5px', 'fontWeight': 'bold', 'marginTop': '15px'},
                     children=f"Status: Bereit - Keine Konfiguration{' (Simuliert)' if SIMULATION_MODE else ''}"),
         
         ], style={'marginLeft': '320px'}),
@@ -309,9 +304,20 @@ app.layout = html.Div([
 ])
 
 @app.callback(
+    Output('waveform-container', 'style'),
+    Input('mode-dropdown', 'value')
+)
+def toggle_waveform_selector(mode):
+    """Zeigt das Wellenform-Dropdown nur für AC-Modi an."""
+    if mode in ["AC Spannung", "AC Strom"]:
+        return {'display': 'block'}
+    else:
+        return {'display': 'none'}
+
+@app.callback(
     [Output('mode-dropdown', 'disabled'),
      Output('channel-dropdown', 'disabled'),
-     Output('signal-type-radio', 'disabled'), # NEU
+     Output('waveform-dropdown', 'disabled'),
      Output('config-button', 'children'),
      Output('config-button', 'style'),
      Output('start-button', 'disabled'),
@@ -320,62 +326,122 @@ app.layout = html.Div([
     [Input('config-button', 'n_clicks')],
     [State('mode-dropdown', 'value'),
      State('channel-dropdown', 'value'),
-     State('signal-type-radio', 'value')] # NEU
+     State('waveform-dropdown', 'value')]
 )
-def handle_configuration(n_clicks, mode, channel, signal_type): # NEU
+def handle_configuration(n_clicks, mode, channel, waveform):
+    """Verwaltet die Konfiguration und Dekonfiguration des DMM."""
     if not n_clicks:
-        return False, False, False, 'Konfigurieren', {
-            'width': '100%', 'height': '40px', 'backgroundColor': '#3498db',
-            'color': 'white', 'border': 'none', 'borderRadius': '5px',
-            'fontWeight': 'bold', 'fontSize': '14px', 'marginTop': '15px'
-        }, True, True, f"Status: Bereit - Keine Konfiguration{' (Simuliert)' if SIMULATION_MODE else ''}"
+        return False, False, False, 'Konfigurieren', {'width': '100%', 'height': '40px', 'backgroundColor': '#3498db', 'color': 'white', 'border': 'none', 'borderRadius': '5px', 'fontWeight': 'bold', 'fontSize': '14px', 'marginTop': '15px'}, True, True, f"Status: Bereit - Keine Konfiguration{' (Simuliert)' if SIMULATION_MODE else ''}"
     
     # Toggle Konfiguration
     if dmm.configured:
         # Dekonfigurieren
         dmm.stop_measurement()
-        return False, False, False, 'Konfigurieren', {
-            'width': '100%', 'height': '40px', 'backgroundColor': '#3498db',
-            'color': 'white', 'border': 'none', 'borderRadius': '5px',
-            'fontWeight': 'bold', 'fontSize': '14px', 'marginTop': '15px'
-        }, True, True, f"Status: Bereit - Keine Konfiguration{' (Simuliert)' if SIMULATION_MODE else ''}"
+        return False, False, False, 'Konfigurieren', {'width': '100%', 'height': '40px', 'backgroundColor': '#3498db', 'color': 'white', 'border': 'none', 'borderRadius': '5px', 'fontWeight': 'bold', 'fontSize': '14px', 'marginTop': '15px'}, True, True, f"Status: Bereit - Keine Konfiguration{' (Simuliert)' if SIMULATION_MODE else ''}"
     else:
         # Konfigurieren
         dmm.modus = mode
         dmm.channel = channel
-        dmm.signal_type = signal_type # NEU
+        if mode in ["AC Spannung", "AC Strom"]:
+            dmm.waveform = waveform
         dmm.start_measurement()
-        return True, True, True, 'Rekonfigurieren', {
-            'width': '100%', 'height': '40px', 'backgroundColor': '#27ae60',
-            'color': 'white', 'border': 'none', 'borderRadius': '5px',
-            'fontWeight': 'bold', 'fontSize': '14px', 'marginTop': '15px'
-        }, False, False, f"Status: Konfiguriert - {mode} auf Kanal {channel}{' (Simuliert)' if SIMULATION_MODE else ''}"
+
+        status_text = f"Status: Konfiguriert - {mode} auf Kanal {channel}"
+        if mode in ["AC Spannung", "AC Strom"]:
+            status_text += f" ({waveform})"
+        status_text += f"{' (Simuliert)' if SIMULATION_MODE else ''}"
+
+        return True, True, True, 'Rekonfigurieren', {'width': '100%', 'height': '40px', 'backgroundColor': '#27ae60', 'color': 'white', 'border': 'none', 'borderRadius': '5px', 'fontWeight': 'bold', 'fontSize': '14px', 'marginTop': '15px'}, False, False, status_text
 
 @app.callback(
-    [Output('measurement-display', 'children')],
-    [Input('display-interval', 'n_intervals')]
+    Output('measurement-display', 'children'),
+    Input('display-interval', 'n_intervals')
 )
 def update_display(n_intervals):
+    """
+    Aktualisiert die Messwertanzeige. Passt die Anzeige für verschiedene AC-Wellenformen an.
+    """
     if not dmm.configured:
-        return ['0.000000 V DC']
+        return '0.000000 V'
     
     display_data = dmm.get_display_data()
     wert = display_data['wert']
+    display_text = ""
     
-    # Einheitenberechnung je nach Modus
-    if dmm.modus == "DC Spannung":
+    # --- DC Modi ---
+    if "DC" in dmm.modus:
         display_value = wert
-    elif dmm.modus == "AC Spannung":
-        display_value = abs(wert) * 0.707  # RMS approximation
-    elif dmm.modus == "DC Strom":
-        display_value = wert / 1.0  # A = V / 1Ω Shunt
-    elif dmm.modus == "AC Strom":
-        display_value = abs(wert) * 0.707 / 1.0  # RMS current
+        if "Strom" in dmm.modus:
+            display_value /= 1.0  # Annahme: A = V / 1Ω Shunt
+        unit = dmm.mode_units[dmm.modus]
+        display_text = f"{display_value:.6f} {unit}"
+
+    # --- AC Modi ---
+    elif "AC" in dmm.modus:
+        peak_value = abs(wert)
+        base_unit = "A" if "Strom" in dmm.modus else "V"
+        unit = dmm.mode_units[dmm.modus]
+
+        # Anzeige basierend auf der ausgewählten Wellenform
+        if dmm.waveform == 'Rechteck (symmetrisch)':
+            display_peak = peak_value
+            if base_unit == "A":
+                display_peak /= 1.0 # Annahme: Ipeak = Vpeak / 1Ω Shunt
+            display_text = f"±{display_peak:.6f} {base_unit}"
+
+        elif dmm.waveform == 'Rechteck (asymmetrisch)':
+            display_peak = peak_value
+            if base_unit == "A":
+                display_peak /= 1.0 # Annahme: Ipeak = Vpeak / 1Ω Shunt
+            
+            # Zeigt den Bereich basierend auf dem Vorzeichen des aktuellen Werts an
+            if wert >= 0:
+                display_text = f"0 bis +{display_peak:.6f} {base_unit}"
+            else:
+                display_text = f"-{display_peak:.6f} bis 0 {base_unit}"
+        
+        # Standard RMS-Berechnung für Sinus und Dreieck
+        else:
+            display_value = 0.0
+            strom_peak = peak_value / 1.0 # Annahme für Strom
+            
+            if dmm.waveform == 'Sinus':
+                display_value = peak_value / math.sqrt(2)
+                if "Strom" in dmm.modus:
+                    display_value = strom_peak / math.sqrt(2)
+            elif dmm.waveform == 'Dreieck':
+                display_value = peak_value / math.sqrt(3)
+                if "Strom" in dmm.modus:
+                    display_value = strom_peak / math.sqrt(3)
+            
+            display_text = f"{display_value:.6f} {unit}"
+            
+    return display_text
+
+def calculate_plot_value(wert, modus, waveform):
+    """Hilfsfunktion zur Berechnung des Werts für das Diagramm (RMS oder Peak)."""
+    # Für DC wird der Rohwert geplottet
+    if "DC" in modus:
+        if "Strom" in modus:
+            return wert / 1.0  # Annahme: Shunt-Widerstand
+        return wert
+
+    # Für AC wird der Effektivwert (RMS) berechnet
+    peak_value = abs(wert)
+    if "Strom" in modus:
+        peak_value /= 1.0  # Annahme: Shunt-Widerstand
+
+    if waveform == 'Sinus':
+        return peak_value / math.sqrt(2)
+    elif waveform == 'Dreieck':
+        return peak_value / math.sqrt(3)
+    elif waveform == 'Rechteck (symmetrisch)':
+        return peak_value  # RMS einer symmetrischen Rechteckwelle ist der Spitzenwert
+    elif waveform == 'Rechteck (asymmetrisch)':
+        # RMS einer 0-zu-Peak Rechteckwelle (50% Tastverhältnis) ist V_peak / sqrt(2)
+        return peak_value / math.sqrt(2)
     
-    unit = dmm.mode_units[dmm.modus]
-    display_text = f"{display_value:.6f} {unit}"
-    
-    return [display_text]
+    return 0.0  # Fallback
 
 @app.callback(
     [Output('start-button', 'disabled', allow_duplicate=True),
@@ -391,6 +457,7 @@ def update_display(n_intervals):
     prevent_initial_call=True
 )
 def handle_recording(start_clicks, pause_clicks, stop_clicks):
+    """Verwaltet Start, Pause und Stop der Datenaufzeichnung."""
     ctx = callback_context
     
     if not ctx.triggered:
@@ -398,17 +465,22 @@ def handle_recording(start_clicks, pause_clicks, stop_clicks):
     
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
+    status_text = f"Status: Aufzeichnung läuft - {dmm.modus} auf Kanal {dmm.channel}"
+    if dmm.modus in ["AC Spannung", "AC Strom"]:
+        status_text += f" ({dmm.waveform})"
+    status_text += f"{' (Simuliert)' if SIMULATION_MODE else ''}"
+    
     if trigger_id == 'start-button' and start_clicks:
         dmm.start_recording()
-        return True, False, False, True, 'Pause', False, f"Status: Aufzeichnung läuft - {dmm.modus} auf Kanal {dmm.channel}{' (Simuliert)' if SIMULATION_MODE else ''}"
+        return True, False, False, True, 'Pause', False, status_text
     
     elif trigger_id == 'pause-button' and pause_clicks:
         if dmm.paused:
             dmm.resume_recording()
-            return True, False, False, True, 'Pause', False, f"Status: Aufzeichnung fortgesetzt - {dmm.modus} auf Kanal {dmm.channel}{' (Simuliert)' if SIMULATION_MODE else ''}"
+            return True, False, False, True, 'Pause', False, status_text.replace("läuft", "fortgesetzt")
         else:
             dmm.pause_recording()
-            return True, False, False, True, 'Fortsetzen', False, f"Status: Aufzeichnung pausiert - {dmm.modus} auf Kanal {dmm.channel}{' (Simuliert)' if SIMULATION_MODE else ''}"
+            return True, False, False, True, 'Fortsetzen', False, status_text.replace("läuft", "pausiert")
     
     elif trigger_id == 'stop-button' and stop_clicks:
         dmm.stop_recording()
@@ -418,98 +490,54 @@ def handle_recording(start_clicks, pause_clicks, stop_clicks):
     return no_update, no_update, no_update, no_update, no_update, no_update, no_update
 
 @app.callback(
-    [Output('measurement-chart', 'figure')],
-    [Input('chart-interval', 'n_intervals')]
+    Output('measurement-chart', 'figure'),
+    Input('chart-interval', 'n_intervals')
 )
 def update_chart(n):
+    """Aktualisiert das Echtzeitdiagramm."""
     if not dmm.recording:
         # Leeres Chart
         fig = go.Figure()
-        fig.update_layout(
-            title='Messwerte',
-            xaxis_title='Zeit (s)',
-            yaxis_title='Spannung (V)',
-            showlegend=False,
-            plot_bgcolor='white',
-            paper_bgcolor='white',
-            margin=dict(l=50, r=50, t=50, b=50)
-        )
-        fig.add_annotation(
-            text="Starten Sie die Aufzeichnung für Diagramm-Anzeige",
-            xref="paper", yref="paper",
-            x=0.5, y=0.5, xanchor='center', yanchor='middle',
-            showarrow=False,
-            font=dict(size=16, color="gray")
-        )
-        return [fig]
+        fig.update_layout(title='Messwerte', xaxis_title='Zeit (s)', yaxis_title='Wert', showlegend=False, plot_bgcolor='white', paper_bgcolor='white', margin=dict(l=50, r=50, t=50, b=50))
+        fig.add_annotation(text="Starten Sie die Aufzeichnung für Diagramm-Anzeige", xref="paper", yref="paper", x=0.5, y=0.5, xanchor='center', yanchor='middle', showarrow=False, font=dict(size=16, color="gray"))
+        return fig
     
     x_data, y_data = dmm.get_chart_data()
-    
     fig = go.Figure()
     
+    y_axis_range = [-1, 1]
+    
     if x_data and y_data:
-        # Datenkonvertierung je nach Modus
-        converted_y_data = []
-        for wert in y_data:
-            if dmm.modus == "DC Spannung":
-                converted_y_data.append(wert)
-            elif dmm.modus == "AC Spannung":
-                converted_y_data.append(abs(wert) * 0.707)
-            elif dmm.modus == "DC Strom":
-                converted_y_data.append(wert / 1.0)
-            elif dmm.modus == "AC Strom":
-                converted_y_data.append(abs(wert) * 0.707 / 1.0)
+        # Datenkonvertierung basierend auf Modus und Wellenform
+        converted_y_data = [calculate_plot_value(wert, dmm.modus, dmm.waveform) for wert in y_data]
         
-        fig.add_trace(go.Scatter(
-            x=x_data,
-            y=converted_y_data,
-            mode='lines', # 'lines+markers' kann bei vielen Punkten langsam werden
-            name=dmm.modus,
-            line=dict(color='#00ff00', width=2)
-        ))
+        fig.add_trace(go.Scatter(x=x_data, y=converted_y_data, mode='lines+markers', name=dmm.modus, line=dict(color='#00ff00', width=2), marker=dict(size=3)))
         
         # Y-Achsen-Skalierung
-        y_min = min(converted_y_data)
-        y_max = max(converted_y_data)
-        y_range_val = y_max - y_min
-        
-        if y_range_val < 0.1:
-            y_range_val = 0.1
-        
-        margin = y_range_val * 0.1
-        y_axis_range = [y_min - margin, y_max + margin]
-    else:
-        # Standardbereich, wenn keine Daten vorhanden sind
-        y_axis_range = [-11, 11] if dmm.signal_type == 'symmetrisch' else [-1, 11]
-
+        if converted_y_data:
+            y_min, y_max = min(converted_y_data), max(converted_y_data)
+            y_range = y_max - y_min if y_max > y_min else 0.1
+            margin = y_range * 0.1
+            y_axis_range = [y_min - margin, y_max + margin]
     
     # Y-Achsen-Beschriftung je nach Modus
-    if "Spannung" in dmm.modus:
-        y_title = "Spannung (V)"
-    else:
-        y_title = "Strom (A)"
+    y_title = "Strom (A)" if "Strom" in dmm.modus else "Spannung (V)"
     
-    fig.update_layout(
-        title=f'{dmm.modus}-Verlauf (Kanal {dmm.channel})',
-        xaxis_title='Zeit (s)',
-        yaxis_title=y_title,
-        showlegend=False,
-        plot_bgcolor='black',
-        paper_bgcolor='white',
-        font=dict(color='black'),
-        xaxis=dict(gridcolor='lightgrey'),
-        yaxis=dict(gridcolor='lightgrey', range=y_axis_range),
-        margin=dict(l=50, r=50, t=50, b=50),
-    )
+    chart_title = f'{dmm.modus}-Verlauf (Kanal {dmm.channel})'
+    if dmm.modus in ["AC Spannung", "AC Strom"]:
+        chart_title += f" - {dmm.waveform}"
+
+    fig.update_layout(title=chart_title, xaxis_title='Zeit (s)', yaxis_title=y_title, showlegend=False, plot_bgcolor='white', paper_bgcolor='white', margin=dict(l=50, r=50, t=50, b=50), yaxis=dict(range=y_axis_range))
     
-    return [fig]
+    return fig
 
 @app.callback(
     Output("download-csv", "data"),
-    [Input("csv-button", "n_clicks")],
+    Input("csv-button", "n_clicks"),
     prevent_initial_call=True
 )
 def download_csv(n_clicks):
+    """Ermöglicht den Download der aufgezeichneten Daten als CSV."""
     if n_clicks and dmm.messdaten:
         df = pd.DataFrame(dmm.messdaten)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
