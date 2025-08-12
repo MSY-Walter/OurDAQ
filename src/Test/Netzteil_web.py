@@ -265,7 +265,7 @@ def kalibrieren_spannung(n_clicks):
     # Letzten Punkt (4095) sicherstellen
     write_dac(4095)
     time.sleep(settle_time)
-    spannung = hat.a_in_read(4095)
+    spannung = hat.a_in_read(0) # Read from channel 0
     kalibrier_tabelle.append((spannung, 4095))
     
     # DAC sicher zurücksetzen
@@ -443,4 +443,5 @@ def update_graphs_and_status(n, korrektur_data, status_data):
 if __name__ == '__main__':
     host_ip = get_ip_address()
     print(f"Dash-Server wird gestartet. Zugriff unter http://{host_ip}:8070")
-    app.run_server(host=host_ip, port=8070, debug=True)
+    # KORRIGIERTE ZEILE: app.run_server() wurde zu app.run() geändert.
+    app.run(host=host_ip, port=8070, debug=True)
