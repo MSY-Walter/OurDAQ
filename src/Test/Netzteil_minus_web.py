@@ -1,23 +1,18 @@
 #!/usr/bin/env python3
 """
-Web-Interface für Labornetzteil – Negative Spannung
-- Automatische Kalibrierung (MCC118 Channel 0)
-- Lineare Interpolation der Kalibrierpunkte
-- Dauerhafte Stromüberwachung (MCC118 Channel 4) in mA
-- Lineare Kalibrierkorrektur für MCC-Strommessung (Offset + Gain)
-- Überstromschutz: bei > MAX_STROM_MA wird DAC sofort auf 0 gesetzt
+Einfaches Web-Interface für Labornetzteil – Negative Spannung
+Exakt wie das ursprüngliche Programm, nur mit Flask Web-Interface
 """
 
-from flask import Flask, render_template_string, request, jsonify, redirect, url_for
-from flask_socketio import SocketIO, emit
+from flask import Flask, render_template_string, request, redirect, url_for
 import spidev
 import time
 import lgpio
-import threading
 from daqhats import mcc118, OptionFlags, HatIDs, HatError
 from daqhats_utils import select_hat_device, chan_list_to_mask
-import numpy as np
-import atexit
+import threading
+import signal
+import sys
 
 # ----------------- Konstanten -----------------
 SHUNT_WIDERSTAND = 0.1      # Ohm
@@ -28,50 +23,36 @@ READ_ALL_AVAILABLE = -1
 MAX_SPANNUNG_NEGATIV = -10  # minimaler Wert (negativ)
 MAX_STROM_MA = 500.0       # Überstromschutz (mA)
 
-# ----------------- Globale Variablen -----------------
+# ----------------- Kalibrierdaten (Spannung <-> DAC) -----------------
 kalibrier_tabelle = []  # Liste von (spannung_in_v, dac_wert)
+
+# ----------------- Korrektur für MCC Strommessung -----------------
 corr_a = -0.279388
 corr_b = 1.782842
-monitoring_active = False
-monitoring_thread = None
-current_voltage = 0.0
-current_dac = 0
-
-# Hardware initialisierung
-spi = None
-gpio_handle = None
-
-app = Flask(__name__)
-app.config['SECRET_KEY'] = 'netzteil_secret_key'
-socketio = SocketIO(app, cors_allowed_origins="*")
 
 # ----------------- Hardware initialisieren -----------------
-def init_hardware():
-    global spi, gpio_handle
-    try:
-        spi = spidev.SpiDev()
-        spi.open(0, 0)
-        spi.max_speed_hz = 1000000
-        spi.mode = 0b00
+spi = spidev.SpiDev()
+spi.open(0, 0)
+spi.max_speed_hz = 1000000
+spi.mode = 0b00
 
-        gpio_handle = lgpio.gpiochip_open(0)
-        lgpio.gpio_claim_output(gpio_handle, CS_PIN)
-        lgpio.gpio_write(gpio_handle, CS_PIN, 1)  # CS inaktiv (HIGH)
-        return True
-    except Exception as e:
-        print(f"Hardware Initialisierung fehlgeschlagen: {e}")
-        return False
+gpio_handle = lgpio.gpiochip_open(0)
+lgpio.gpio_claim_output(gpio_handle, CS_PIN)
+lgpio.gpio_write(gpio_handle, CS_PIN, 1)  # CS inaktiv (HIGH)
+
+# ----------------- Globale Variablen -----------------
+monitoring_active = False
+current_status = "Bereit"
+current_voltage = 0.0
+current_current = 0.0
+
+app = Flask(__name__)
 
 # ----------------- DAC Funktionen -----------------
 def write_dac(value):
     """Schreibt 12-bit Wert 0..4095 an DAC (MCP49xx-kompatibel)."""
-    global current_dac
     if not (0 <= value <= 4095):
         raise ValueError("DAC-Wert muss zwischen 0 und 4095 liegen.")
-    
-    if spi is None or gpio_handle is None:
-        raise RuntimeError("Hardware nicht initialisiert")
-        
     control = 0b1011000000000000
     data = control | (value & 0xFFF)
     high_byte = (data >> 8) & 0xFF
@@ -79,50 +60,42 @@ def write_dac(value):
     lgpio.gpio_write(gpio_handle, CS_PIN, 0)
     spi.xfer2([high_byte, low_byte])
     lgpio.gpio_write(gpio_handle, CS_PIN, 1)
-    current_dac = value
 
-# ----------------- Kalibrierung -----------------
+# ----------------- Kalibrierung (Spannungs-Mapping) -----------------
 def kalibrieren(sp_step=32, settle=0.05):
-    global kalibrier_tabelle
+    """
+    Führt DAC von 0..4095 mit Schritt sp_step, misst MCC118 Channel 0,
+    und füllt kalibrier_tabelle mit (gemessene_spannung_V, dac_wert).
+    Nur negative Spannungen werden gespeichert.
+    """
+    global kalibrier_tabelle, current_status
     kalibrier_tabelle.clear()
-    
-    try:
-        address = select_hat_device(HatIDs.MCC_118)
-        hat = mcc118(address)
+    current_status = "Kalibrierung läuft..."
+    print("\nStarte Kalibrierung (Negative Spannung)...")
+    address = select_hat_device(HatIDs.MCC_118)
+    hat = mcc118(address)
 
-        for dac_wert in range(0, 4096, sp_step):
-            write_dac(dac_wert)
-            time.sleep(settle)
-            spannung = hat.a_in_read(0)  # Channel 0 misst Ausgangsspannung
-            if spannung <= 0:
-                kalibrier_tabelle.append((spannung, dac_wert))
-                socketio.emit('calibration_update', {
-                    'dac': dac_wert, 
-                    'voltage': spannung,
-                    'progress': int((dac_wert / 4096) * 100)
-                })
+    for dac_wert in range(0, 4096, sp_step):
+        write_dac(dac_wert)
+        time.sleep(settle)
+        spannung = hat.a_in_read(0)  # Channel 0 misst Ausgangsspannung
+        # Nur negative Spannungen speichern, andere ignorieren
+        if spannung <= 0:
+            kalibrier_tabelle.append((spannung, dac_wert))
+            print(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V")
 
-        # DAC 4095 sicherstellen
-        if not any(dac == 4095 for _, dac in kalibrier_tabelle):
-            write_dac(4095)
-            time.sleep(settle)
-            spannung = hat.a_in_read(0)
-            if spannung <= 0:
-                kalibrier_tabelle.append((spannung, 4095))
+    # Sicherstellen, dass DAC 4095 auch dabei ist
+    if not any(dac == 4095 for _, dac in kalibrier_tabelle):
+        write_dac(4095)
+        time.sleep(settle)
+        spannung = hat.a_in_read(0)
+        if spannung <= 0:
+            kalibrier_tabelle.append((spannung, 4095))
 
-        write_dac(0)
-        kalibrier_tabelle.sort(key=lambda x: x[0])
-        
-        socketio.emit('calibration_complete', {
-            'points': len(kalibrier_tabelle),
-            'min_voltage': kalibrier_tabelle[0][0] if kalibrier_tabelle else 0,
-            'max_voltage': kalibrier_tabelle[-1][0] if kalibrier_tabelle else 0
-        })
-        
-        return True
-    except Exception as e:
-        socketio.emit('error', {'message': f'Kalibrierung fehlgeschlagen: {e}'})
-        return False
+    write_dac(0)
+    kalibrier_tabelle.sort(key=lambda x: x[0])
+    current_status = f"Kalibriert ({len(kalibrier_tabelle)} Punkte)"
+    print("Kalibrierung abgeschlossen.")
 
 def spannung_zu_dac_interpoliert(ziel_spannung):
     """Lineare Interpolation zwischen Kalibrierpunkten -> DAC-Wert (int)."""
@@ -130,233 +103,200 @@ def spannung_zu_dac_interpoliert(ziel_spannung):
         raise RuntimeError("Keine Kalibrierdaten vorhanden. Bitte kalibrieren.")
     if ziel_spannung > 0:
         raise ValueError("Nur negative Spannungen erlaubt.")
-    
+    # Randbehandlung
     if ziel_spannung <= kalibrier_tabelle[0][0]:
         return kalibrier_tabelle[0][1]
     if ziel_spannung >= kalibrier_tabelle[-1][0]:
         return kalibrier_tabelle[-1][1]
-    
+    # Suche Intervall
     for i in range(len(kalibrier_tabelle) - 1):
         u1, d1 = kalibrier_tabelle[i]
         u2, d2 = kalibrier_tabelle[i+1]
         if u1 <= ziel_spannung <= u2:
             if u2 == u1:
                 return d1
+            # lineare Interpolation
             dac = d1 + (d2 - d1) * (ziel_spannung - u1) / (u2 - u1)
             return int(round(dac))
-    
     raise ValueError("Interpolation fehlgeschlagen.")
 
 # ----------------- Stromkorrektur -----------------
 def apply_strom_korrektur(i_mcc_mA):
     return corr_a + corr_b * i_mcc_mA
 
-def update_strom_korrektur(mcc_list, true_list):
+def kalibriere_stromkorrektur(mcc_list_mA, true_list_mA):
     global corr_a, corr_b
-    try:
-        mcc = np.array(mcc_list, dtype=float)
-        true = np.array(true_list, dtype=float)
-        A = np.vstack([np.ones_like(mcc), mcc]).T
-        a, b = np.linalg.lstsq(A, true, rcond=None)[0]
-        corr_a, corr_b = float(a), float(b)
-        return True
-    except Exception:
-        return False
+    import numpy as np
+    mcc = np.array(mcc_list_mA, dtype=float)
+    true = np.array(true_list_mA, dtype=float)
+    A = np.vstack([np.ones_like(mcc), mcc]).T
+    a, b = np.linalg.lstsq(A, true, rcond=None)[0]
+    corr_a, corr_b = float(a), float(b)
 
 # ----------------- Stromüberwachung -----------------
-def strom_monitoring_thread():
-    global monitoring_active
+def strom_ueberwachung(max_strom_ma=MAX_STROM_MA):
+    global monitoring_active, current_status, current_current
     
+    channels = [5]
+    channel_mask = chan_list_to_mask(channels)
+    num_channels = len(channels)
+    scan_rate = 1000.0
+    options = OptionFlags.CONTINUOUS
+
+    address = select_hat_device(HatIDs.MCC_118)
+    hat = mcc118(address)
+    hat.a_in_scan_start(channel_mask, 0, scan_rate, options)
+
+    current_status = "Stromüberwachung aktiv"
+    print("\nStromüberwachung läuft")
+
     try:
-        channels = [5]
-        channel_mask = chan_list_to_mask(channels)
-        num_channels = len(channels)
-        scan_rate = 1000.0
-        options = OptionFlags.CONTINUOUS
-
-        address = select_hat_device(HatIDs.MCC_118)
-        hat = mcc118(address)
-        hat.a_in_scan_start(channel_mask, 0, scan_rate, options)
-
         while monitoring_active:
-            try:
-                read_result = hat.a_in_scan_read(READ_ALL_AVAILABLE, 0.5)
-                if len(read_result.data) >= num_channels:
-                    shunt_v = read_result.data[-1]
-                    current_mcc_mA = (shunt_v / (VERSTAERKUNG * SHUNT_WIDERSTAND)) * 1000.0
-                    current_true_mA = apply_strom_korrektur(current_mcc_mA)
-                    
-                    socketio.emit('current_data', {
-                        'shunt_voltage': shunt_v,
-                        'mcc_current': current_mcc_mA,
-                        'true_current': current_true_mA,
-                        'dac_value': current_dac,
-                        'set_voltage': current_voltage
-                    })
+            read_result = hat.a_in_scan_read(READ_ALL_AVAILABLE, 0.5)
+            if len(read_result.data) >= num_channels:
+                shunt_v = read_result.data[-1]
+                current_mcc_mA = (shunt_v / (VERSTAERKUNG * SHUNT_WIDERSTAND)) * 1000.0
+                current_true_mA = apply_strom_korrektur(current_mcc_mA)
+                current_current = current_true_mA
 
-                    if current_true_mA > MAX_STROM_MA:
-                        write_dac(0)
-                        monitoring_active = False
-                        socketio.emit('overcurrent', {
-                            'current': current_true_mA,
-                            'limit': MAX_STROM_MA
-                        })
-                        break
-                        
-                time.sleep(0.1)
-            except Exception as e:
-                break
+                if current_true_mA > max_strom_ma:
+                    write_dac(0)
+                    current_status = f"ÜBERSTROM: {current_true_mA:.1f} mA"
+                    monitoring_active = False
+                    break
+            time.sleep(0.1)
 
+    except Exception as e:
+        current_status = f"Fehler: {e}"
+
+    finally:
         try:
             hat.a_in_scan_stop()
         except Exception:
             pass
-            
-    except Exception as e:
-        socketio.emit('error', {'message': f'Stromüberwachung Fehler: {e}'})
-    finally:
+        if monitoring_active:
+            current_status = "Überwachung gestoppt"
         monitoring_active = False
 
 # ----------------- Web Routes -----------------
 @app.route('/')
 def index():
-    return render_template_string(HTML_TEMPLATE)
+    return render_template_string(HTML_TEMPLATE, 
+                                  status=current_status,
+                                  voltage=current_voltage,
+                                  current=current_current,
+                                  corr_a=corr_a,
+                                  corr_b=corr_b,
+                                  calibrated=len(kalibrier_tabelle) > 0,
+                                  monitoring=monitoring_active)
 
-@socketio.on('connect')
-def handle_connect():
-    emit('status', {
-        'calibrated': len(kalibrier_tabelle) > 0,
-        'monitoring': monitoring_active,
-        'current_voltage': current_voltage,
-        'current_dac': current_dac,
-        'correction_a': corr_a,
-        'correction_b': corr_b
-    })
-
-@socketio.on('start_calibration')
-def handle_calibration(data):
-    sp_step = data.get('step', 32)
-    settle = data.get('settle', 0.05)
+@app.route('/kalibrieren', methods=['POST'])
+def web_kalibrieren():
+    global monitoring_active
+    if monitoring_active:
+        return redirect(url_for('index'))
     
-    def calibration_worker():
-        emit('calibration_started')
-        success = kalibrieren(sp_step, settle)
-        if not success:
-            emit('error', {'message': 'Kalibrierung fehlgeschlagen'})
-    
-    threading.Thread(target=calibration_worker, daemon=True).start()
+    threading.Thread(target=kalibrieren, daemon=True).start()
+    time.sleep(0.5)  # Kurz warten damit Status aktualisiert wird
+    return redirect(url_for('index'))
 
-@socketio.on('set_voltage')
-def handle_set_voltage(data):
-    global current_voltage, monitoring_active, monitoring_thread
+@app.route('/spannung_setzen', methods=['POST'])
+def web_spannung_setzen():
+    global current_voltage, monitoring_active
     
     try:
-        target_voltage = float(data['voltage'])
+        ziel = float(request.form['spannung'])
+        if ziel > 0 or ziel < MAX_SPANNUNG_NEGATIV:
+            return redirect(url_for('index'))
         
-        if target_voltage > 0 or target_voltage < MAX_SPANNUNG_NEGATIV:
-            emit('error', {'message': f'Spannung muss zwischen {MAX_SPANNUNG_NEGATIV} und 0 V liegen'})
-            return
-        
-        dac_value = spannung_zu_dac_interpoliert(target_voltage)
-        write_dac(dac_value)
-        current_voltage = target_voltage
+        dac = spannung_zu_dac_interpoliert(ziel)
+        write_dac(dac)
+        current_voltage = ziel
         
         # Stromüberwachung starten
         if not monitoring_active:
             monitoring_active = True
-            monitoring_thread = threading.Thread(target=strom_monitoring_thread, daemon=True)
-            monitoring_thread.start()
-        
-        emit('voltage_set', {
-            'voltage': target_voltage,
-            'dac': dac_value,
-            'monitoring_started': True
-        })
-        
+            threading.Thread(target=strom_ueberwachung, daemon=True).start()
+            
     except Exception as e:
-        emit('error', {'message': f'Spannungseinstellung fehlgeschlagen: {e}'})
+        print(f"Fehler: {e}")
+    
+    return redirect(url_for('index'))
 
-@socketio.on('stop_monitoring')
-def handle_stop_monitoring():
-    global monitoring_active
+@app.route('/stopp')
+def web_stopp():
+    global monitoring_active, current_voltage, current_current, current_status
     monitoring_active = False
     write_dac(0)
-    emit('monitoring_stopped')
+    current_voltage = 0.0
+    current_current = 0.0
+    current_status = "Gestoppt"
+    return redirect(url_for('index'))
 
-@socketio.on('update_correction')
-def handle_update_correction(data):
+@app.route('/korrektur', methods=['POST'])
+def web_korrektur():
     try:
-        mcc_values = [float(x) for x in data['mcc_values']]
-        true_values = [float(x) for x in data['true_values']]
+        # Parse input pairs
+        input_text = request.form['korrektur_daten']
+        lines = [line.strip() for line in input_text.split('\n') if line.strip()]
         
-        if len(mcc_values) != len(true_values) or len(mcc_values) < 2:
-            emit('error', {'message': 'Mindestens 2 Wertepaaare erforderlich'})
-            return
-            
-        if update_strom_korrektur(mcc_values, true_values):
-            emit('correction_updated', {
-                'a': corr_a,
-                'b': corr_b
-            })
-        else:
-            emit('error', {'message': 'Korrektur-Update fehlgeschlagen'})
+        mcc_values = []
+        true_values = []
+        
+        for line in lines:
+            parts = line.split()
+            if len(parts) == 2:
+                mcc_values.append(float(parts[0]))
+                true_values.append(float(parts[1]))
+        
+        if len(mcc_values) >= 2:
+            kalibriere_stromkorrektur(mcc_values, true_values)
             
     except Exception as e:
-        emit('error', {'message': f'Korrektur-Update Fehler: {e}'})
+        print(f"Korrektur Fehler: {e}")
+    
+    return redirect(url_for('index'))
 
 # ----------------- Cleanup -----------------
 def cleanup():
-    global monitoring_active, spi, gpio_handle
+    global monitoring_active
     monitoring_active = False
-    
-    try:
-        if spi:
-            write_dac(0)
-            spi.close()
-    except Exception:
-        pass
-    
-    try:
-        if gpio_handle:
-            lgpio.gpiochip_close(gpio_handle)
-    except Exception:
-        pass
+    write_dac(0)
+    spi.close()
+    lgpio.gpiochip_close(gpio_handle)
 
-atexit.register(cleanup)
+def signal_handler(sig, frame):
+    cleanup()
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
 
 # ----------------- HTML Template -----------------
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Labornetzteil Steuerung - Negative Spannung</title>
+    <title>Labornetzteil Steuerung</title>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <meta http-equiv="refresh" content="2">
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .card { background: white; padding: 20px; margin: 10px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .header { background: #2c3e50; color: white; text-align: center; padding: 20px; border-radius: 8px; }
-        .status { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
-        .status-item { background: #ecf0f1; padding: 15px; border-radius: 5px; text-align: center; }
-        .status-item.active { background: #2ecc71; color: white; }
-        .status-item.warning { background: #f39c12; color: white; }
-        .status-item.error { background: #e74c3c; color: white; }
-        .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-        .input-group { margin: 10px 0; }
-        .input-group label { display: block; margin-bottom: 5px; font-weight: bold; }
-        .input-group input, .input-group button { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
-        .input-group button { background: #3498db; color: white; border: none; cursor: pointer; }
-        .input-group button:hover { background: #2980b9; }
-        .input-group button:disabled { background: #95a5a6; cursor: not-allowed; }
-        .emergency-stop { background: #e74c3c !important; font-size: 18px; font-weight: bold; }
-        .emergency-stop:hover { background: #c0392b !important; }
-        .log { height: 200px; overflow-y: auto; background: #2c3e50; color: #2ecc71; font-family: monospace; padding: 10px; border-radius: 4px; }
-        .calibration-progress { width: 100%; height: 20px; background: #ecf0f1; border-radius: 10px; overflow: hidden; }
-        .calibration-progress-bar { height: 100%; background: #3498db; transition: width 0.3s; }
-        .correction-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        .hidden { display: none; }
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; }
+        .header { text-align: center; color: #333; border-bottom: 2px solid #007acc; padding-bottom: 10px; }
+        .status { background: #e8f4f8; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 4px solid #007acc; }
+        .form-group { margin: 15px 0; padding: 15px; background: #f9f9f9; border-radius: 5px; }
+        .form-group h3 { margin-top: 0; color: #007acc; }
+        input[type="number"], textarea { width: 200px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        textarea { width: 300px; height: 100px; }
+        button { padding: 10px 20px; margin: 5px; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; }
+        .btn-primary { background: #007acc; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-danger { background: #dc3545; color: white; font-weight: bold; }
+        .btn-warning { background: #ffc107; color: black; }
+        .btn:hover { opacity: 0.8; }
+        .status-active { color: #28a745; font-weight: bold; }
+        .status-error { color: #dc3545; font-weight: bold; }
+        .info { background: #d1ecf1; padding: 10px; margin: 10px 0; border-radius: 4px; }
     </style>
 </head>
 <body>
@@ -366,265 +306,97 @@ HTML_TEMPLATE = '''
             <h2>Negative Spannung (-10V bis 0V)</h2>
         </div>
 
-        <div class="card">
-            <h3>📊 Status</h3>
-            <div class="status">
-                <div class="status-item" id="calibration-status">
-                    <strong>Kalibrierung</strong><br>
-                    <span id="cal-text">Nicht kalibriert</span>
-                </div>
-                <div class="status-item" id="monitoring-status">
-                    <strong>Überwachung</strong><br>
-                    <span id="mon-text">Gestoppt</span>
-                </div>
-                <div class="status-item" id="voltage-status">
-                    <strong>Ausgangsspannung</strong><br>
-                    <span id="volt-text">0.000 V</span>
-                </div>
-                <div class="status-item" id="current-status">
-                    <strong>Ausgangsstrom</strong><br>
-                    <span id="curr-text">0.00 mA</span>
-                </div>
+        <div class="status">
+            <h3>📊 Aktueller Status</h3>
+            <p><strong>System:</strong> 
+                {% if 'Überstrom' in status or 'Fehler' in status %}
+                    <span class="status-error">{{ status }}</span>
+                {% elif monitoring %}
+                    <span class="status-active">{{ status }}</span>
+                {% else %}
+                    {{ status }}
+                {% endif %}
+            </p>
+            <p><strong>Ausgangsspannung:</strong> {{ "%.3f"|format(voltage) }} V</p>
+            <p><strong>Ausgangsstrom:</strong> {{ "%.2f"|format(current) }} mA</p>
+            <p><strong>Kalibriert:</strong> {{ "Ja" if calibrated else "Nein" }}</p>
+            <p><strong>Stromkorrektur:</strong> i_true = {{ "%.6f"|format(corr_a) }} + {{ "%.9f"|format(corr_b) }} * i_mcc</p>
+        </div>
+
+        <div class="form-group">
+            <h3>🔧 Kalibrierung</h3>
+            <form method="POST" action="/kalibrieren">
+                <button type="submit" class="btn-warning" 
+                        {% if monitoring %}disabled{% endif %}>
+                    Kalibrierung starten
+                </button>
+            </form>
+            <div class="info">
+                <small>Führt automatische Kalibrierung durch (dauert ca. 1-2 Minuten)</small>
             </div>
         </div>
 
-        <div class="controls">
-            <div class="card">
-                <h3>🔧 Kalibrierung</h3>
-                <div class="input-group">
-                    <label>Schrittgröße (DAC):</label>
-                    <input type="number" id="cal-step" value="32" min="1" max="100">
-                </div>
-                <div class="input-group">
-                    <label>Wartezeit (s):</label>
-                    <input type="number" id="cal-settle" value="0.05" step="0.01" min="0.01" max="1">
-                </div>
-                <div class="input-group">
-                    <button id="start-calibration" onclick="startCalibration()">Kalibrierung starten</button>
-                </div>
-                <div class="calibration-progress hidden" id="cal-progress">
-                    <div class="calibration-progress-bar" id="cal-progress-bar"></div>
-                </div>
-            </div>
-
-            <div class="card">
-                <h3>⚡ Spannungssteuerung</h3>
-                <div class="input-group">
-                    <label>Zielspannung (V):</label>
-                    <input type="number" id="target-voltage" step="0.001" min="-10" max="0" value="0">
-                </div>
-                <div class="input-group">
-                    <button id="set-voltage" onclick="setVoltage()" disabled>Spannung einstellen</button>
-                </div>
-                <div class="input-group">
-                    <button class="emergency-stop" onclick="emergencyStop()">🚨 NOTAUS</button>
-                </div>
+        <div class="form-group">
+            <h3>⚡ Spannung einstellen</h3>
+            <form method="POST" action="/spannung_setzen">
+                <label>Zielspannung (V): </label>
+                <input type="number" name="spannung" step="0.001" min="-10" max="0" value="0" required>
+                <button type="submit" class="btn-success" 
+                        {% if not calibrated or monitoring %}disabled{% endif %}>
+                    Spannung setzen
+                </button>
+            </form>
+            <div class="info">
+                <small>Startet automatisch die Stromüberwachung</small>
             </div>
         </div>
 
-        <div class="card">
+        <div class="form-group">
+            <h3>🚨 Notaus</h3>
+            <a href="/stopp">
+                <button class="btn-danger">STOPP - Netzteil AUS</button>
+            </a>
+            <div class="info">
+                <small>Setzt DAC auf 0 und stoppt Überwachung</small>
+            </div>
+        </div>
+
+        <div class="form-group">
             <h3>📈 Stromkorrektur</h3>
-            <p>Geben Sie Messwertpaare ein (MCC-Wert in mA, Echter Wert in mA):</p>
-            <div id="correction-pairs">
-                <div class="correction-inputs">
-                    <input type="number" placeholder="MCC Wert (mA)" step="0.001" class="mcc-input">
-                    <input type="number" placeholder="Echter Wert (mA)" step="0.001" class="true-input">
-                </div>
-            </div>
-            <div class="input-group">
-                <button onclick="addCorrectionPair()">+ Weiteres Paar hinzufügen</button>
-            </div>
-            <div class="input-group">
-                <button onclick="updateCorrection()">Korrektur aktualisieren</button>
-            </div>
-            <div class="input-group">
-                <strong>Aktuelle Korrektur:</strong>
-                <span id="correction-formula">i_true = 0.000 + 1.000 * i_mcc</span>
+            <form method="POST" action="/korrektur">
+                <p>Messwertpaare eingeben (eine Zeile pro Paar: mcc_mA true_mA):</p>
+                <textarea name="korrektur_daten" placeholder="6.0 0.328
+12.5 0.654
+18.2 0.982"></textarea><br>
+                <button type="submit" class="btn-primary">Korrektur berechnen</button>
+            </form>
+            <div class="info">
+                <small>Mindestens 2 Messwertpaare erforderlich</small>
             </div>
         </div>
 
-        <div class="card">
-            <h3>📋 Live-Daten</h3>
-            <div class="log" id="data-log"></div>
+        <div class="info">
+            <p><strong>Hinweise:</strong></p>
+            <ul>
+                <li>Seite aktualisiert sich automatisch alle 2 Sekunden</li>
+                <li>Bei Überstrom wird das Netzteil automatisch abgeschaltet</li>
+                <li>Kalibrierung muss vor der ersten Nutzung durchgeführt werden</li>
+            </ul>
         </div>
     </div>
-
-    <script>
-        const socket = io();
-        let isCalibrated = false;
-        let isMonitoring = false;
-
-        // Socket Event Handlers
-        socket.on('status', function(data) {
-            isCalibrated = data.calibrated;
-            isMonitoring = data.monitoring;
-            updateStatus(data);
-            updateCorrectionFormula(data.correction_a, data.correction_b);
-        });
-
-        socket.on('calibration_started', function() {
-            document.getElementById('cal-progress').classList.remove('hidden');
-            document.getElementById('start-calibration').disabled = true;
-            logMessage('Kalibrierung gestartet...');
-        });
-
-        socket.on('calibration_update', function(data) {
-            const progressBar = document.getElementById('cal-progress-bar');
-            progressBar.style.width = data.progress + '%';
-            logMessage(`Kalibrierung: DAC ${data.dac} -> ${data.voltage.toFixed(5)} V`);
-        });
-
-        socket.on('calibration_complete', function(data) {
-            isCalibrated = true;
-            document.getElementById('cal-progress').classList.add('hidden');
-            document.getElementById('start-calibration').disabled = false;
-            document.getElementById('set-voltage').disabled = false;
-            document.getElementById('calibration-status').className = 'status-item active';
-            document.getElementById('cal-text').textContent = `${data.points} Punkte`;
-            logMessage(`Kalibrierung abgeschlossen: ${data.points} Punkte, Bereich: ${data.min_voltage.toFixed(3)}V bis ${data.max_voltage.toFixed(3)}V`);
-        });
-
-        socket.on('voltage_set', function(data) {
-            document.getElementById('volt-text').textContent = `${data.voltage.toFixed(3)} V (DAC: ${data.dac})`;
-            logMessage(`Spannung eingestellt: ${data.voltage.toFixed(3)} V`);
-            if (data.monitoring_started) {
-                isMonitoring = true;
-                document.getElementById('monitoring-status').className = 'status-item active';
-                document.getElementById('mon-text').textContent = 'Aktiv';
-            }
-        });
-
-        socket.on('current_data', function(data) {
-            document.getElementById('curr-text').textContent = `${data.true_current.toFixed(2)} mA`;
-            logMessage(`Strom: ${data.true_current.toFixed(2)} mA (Shunt: ${data.shunt_voltage.toFixed(5)} V)`);
-        });
-
-        socket.on('overcurrent', function(data) {
-            document.getElementById('current-status').className = 'status-item error';
-            document.getElementById('monitoring-status').className = 'status-item error';
-            document.getElementById('mon-text').textContent = 'ÜBERSTROM!';
-            document.getElementById('volt-text').textContent = '0.000 V';
-            logMessage(`⚠️ ÜBERSTROM: ${data.current.toFixed(1)} mA > ${data.limit.toFixed(1)} mA - Netzteil abgeschaltet!`, 'error');
-            isMonitoring = false;
-        });
-
-        socket.on('monitoring_stopped', function() {
-            isMonitoring = false;
-            document.getElementById('monitoring-status').className = 'status-item';
-            document.getElementById('mon-text').textContent = 'Gestoppt';
-            document.getElementById('volt-text').textContent = '0.000 V';
-            document.getElementById('curr-text').textContent = '0.00 mA';
-            logMessage('Überwachung gestoppt');
-        });
-
-        socket.on('correction_updated', function(data) {
-            updateCorrectionFormula(data.a, data.b);
-            logMessage(`Korrektur aktualisiert: a=${data.a.toFixed(6)}, b=${data.b.toFixed(9)}`);
-        });
-
-        socket.on('error', function(data) {
-            logMessage(`❌ Fehler: ${data.message}`, 'error');
-        });
-
-        // UI Functions
-        function updateStatus(data) {
-            if (data.calibrated) {
-                document.getElementById('calibration-status').className = 'status-item active';
-                document.getElementById('cal-text').textContent = 'Bereit';
-                document.getElementById('set-voltage').disabled = false;
-            }
-
-            if (data.monitoring) {
-                document.getElementById('monitoring-status').className = 'status-item active';
-                document.getElementById('mon-text').textContent = 'Aktiv';
-            }
-
-            document.getElementById('volt-text').textContent = `${data.current_voltage.toFixed(3)} V`;
-        }
-
-        function updateCorrectionFormula(a, b) {
-            document.getElementById('correction-formula').textContent = 
-                `i_true = ${a.toFixed(6)} + ${b.toFixed(9)} * i_mcc`;
-        }
-
-        function startCalibration() {
-            const step = parseInt(document.getElementById('cal-step').value);
-            const settle = parseFloat(document.getElementById('cal-settle').value);
-            socket.emit('start_calibration', {step: step, settle: settle});
-        }
-
-        function setVoltage() {
-            const voltage = parseFloat(document.getElementById('target-voltage').value);
-            socket.emit('set_voltage', {voltage: voltage});
-        }
-
-        function emergencyStop() {
-            socket.emit('stop_monitoring');
-        }
-
-        function addCorrectionPair() {
-            const container = document.getElementById('correction-pairs');
-            const div = document.createElement('div');
-            div.className = 'correction-inputs';
-            div.innerHTML = `
-                <input type="number" placeholder="MCC Wert (mA)" step="0.001" class="mcc-input">
-                <input type="number" placeholder="Echter Wert (mA)" step="0.001" class="true-input">
-            `;
-            container.appendChild(div);
-        }
-
-        function updateCorrection() {
-            const mccInputs = document.querySelectorAll('.mcc-input');
-            const trueInputs = document.querySelectorAll('.true-input');
-            
-            const mccValues = [];
-            const trueValues = [];
-            
-            for (let i = 0; i < mccInputs.length; i++) {
-                const mccVal = parseFloat(mccInputs[i].value);
-                const trueVal = parseFloat(trueInputs[i].value);
-                
-                if (!isNaN(mccVal) && !isNaN(trueVal)) {
-                    mccValues.push(mccVal);
-                    trueValues.push(trueVal);
-                }
-            }
-            
-            if (mccValues.length < 2) {
-                alert('Mindestens 2 gültige Wertepaare erforderlich!');
-                return;
-            }
-            
-            socket.emit('update_correction', {
-                mcc_values: mccValues,
-                true_values: trueValues
-            });
-        }
-
-        function logMessage(message, type = 'info') {
-            const log = document.getElementById('data-log');
-            const timestamp = new Date().toLocaleTimeString();
-            const color = type === 'error' ? '#e74c3c' : '#2ecc71';
-            log.innerHTML += `<div style="color: ${color}">[${timestamp}] ${message}</div>`;
-            log.scrollTop = log.scrollHeight;
-        }
-
-        // Initialize
-        logMessage('Webinterface gestartet - Verbinde mit Server...');
-    </script>
 </body>
 </html>
 '''
 
 if __name__ == '__main__':
-    print("Initialisiere Hardware...")
-    if init_hardware():
-        print("Hardware erfolgreich initialisiert")
-        print("Starte automatische Kalibrierung...")
-        if kalibrieren():
-            print("Kalibrierung abgeschlossen")
-        print("Starte Webserver...")
-        print("Zugriff über: http://0.0.0.0:5000")
-        socketio.run(app, host='0.0.0.0', port=5000, debug=False)
-    else:
-        print("Hardware-Initialisierung fehlgeschlagen!")
+    # Automatische Kalibrierung beim Start
+    print("Starte automatische Kalibrierung...")
+    kalibrieren()
+    
+    print("Starte Webserver auf Port 5000...")
+    print("Zugriff über: http://0.0.0.0:5000")
+    
+    try:
+        app.run(host='0.0.0.0', port=5000, debug=False)
+    except KeyboardInterrupt:
+        cleanup()
