@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 """
-Steuerprogramm für Labornetzteil – Positive Spannung & Stromüberwachung
-Web-Implementierung mit Dash:
-- Kalibrierung und Spannungseinstellung (positiv)
-- Kontinuierliche Stromüberwachung mit Korrektur
-- Automatischer Überstromschutz
+Steuerprogramm für Labornetzteil – Positive Spannung
+Reduzierte Web-Implementierung mit Dash (nur Kalibrierung und Spannungseinstellung)
 """
 
 import spidev
@@ -12,7 +9,7 @@ import time
 import lgpio
 import numpy as np
 import dash
-from dash import dcc, html, Input, Output, State, no_update
+from dash import dcc, html, Input, Output, State
 
 from daqhats import mcc118, HatIDs
 from daqhats_utils import select_hat_device
@@ -20,16 +17,6 @@ from daqhats_utils import select_hat_device
 # ----------------- Konstanten -----------------
 CS_PIN = 22                 # Chip Select Pin
 MAX_SPANNUNG_POSITIV = 10   # Maximal erwarteter Wert (positiv)
-
-# Strommessung & Schutz
-SHUNT_WIDERSTAND = 0.1      # Ohm
-VERSTAERKUNG = 69.0         # Verstärkungsfaktor des Stromverstärkers
-MAX_STROM_MA = 500.0        # Schutzschwelle in mA (z.B. 500 mA)
-
-# Lineare Korrekturparameter für Strommessung (I_true_mA = a + b * I_mcc_mA)
-# Diese Werte sollten durch eine eigene Kalibrierung ermittelt werden.
-CORR_A = -0.1347
-CORR_B = 0.0780
 
 # ----------------- Hardware initialisieren (einmalig beim Start) -----------------
 try:
@@ -113,20 +100,6 @@ def spannung_zu_dac_interpoliert(ziel_spannung, kalibrier_tabelle):
     interpolated_dac = np.interp(ziel_spannung, spannungen, dac_werte)
     return int(round(interpolated_dac))
 
-# ----------------- Strommessung -----------------
-def get_corrected_current_mA():
-    """Liest Spannung von Channel 4, berechnet und korrigiert den Strom."""
-    shunt_spannung = hat.a_in_read(4) # Channel 4 für Strommessung
-    # Verhindere Division durch Null, falls Verstärkung 0 ist
-    if VERSTAERKUNG == 0:
-        return 0.0
-    # I = U_shunt / (R_shunt * Verstärkung)
-    strom_A = shunt_spannung / (SHUNT_WIDERSTAND * VERSTAERKUNG)
-    strom_mcc_mA = strom_A * 1000.0
-    # Korrektur anwenden
-    strom_korrigiert_mA = CORR_A + CORR_B * strom_mcc_mA
-    return strom_korrigiert_mA
-
 # ----------------- Aufräumen -----------------
 def cleanup():
     print("\nAufräumen...")
@@ -146,9 +119,8 @@ app.title = "Labornetzteil Steuerung (Positiv)"
 app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'maxWidth': '800px', 'margin': 'auto', 'padding': '20px'}, children=[
     html.H1("Labornetzteil Steuerung (Positive Spannung)"),
     
+    # Store-Komponente zum Speichern von Daten im Browser
     dcc.Store(id='kalibrier-tabelle-store'),
-    dcc.Store(id='overcurrent-flag', data=False), # Flag für Überstrom
-    dcc.Interval(id='interval-strommessung', interval=500, n_intervals=0), # 500ms Intervall
     
     # Sektion 1: Kalibrierung
     html.Div(className="card", style={'border': '1px solid #ddd', 'padding': '15px', 'borderRadius': '5px', 'marginBottom': '20px'}, children=[
@@ -166,16 +138,6 @@ app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'maxWidth': '800
         dcc.Slider(id='spannung-slider', min=0, max=MAX_SPANNUNG_POSITIV, step=0.01, value=0, marks={i: f'{i}V' for i in range(0, int(MAX_SPANNUNG_POSITIV) + 1, 2)}),
         dcc.Input(id='spannung-input', type='number', min=0, max=MAX_SPANNUNG_POSITIV, step=0.01, value=0, style={'marginLeft': '20px', 'width': '100px'}),
         html.Div(id='spannung-status', style={'marginTop': '10px', 'fontWeight': 'bold'}),
-    ]),
-
-    # Sektion 3: Stromüberwachung
-    html.Div(className="card", style={'border': '1px solid #ddd', 'padding': '15px', 'borderRadius': '5px'}, children=[
-        html.H2("3. Live-Überwachung"),
-        html.Div([
-            html.B("Aktueller Strom: "),
-            html.Span(id='strom-anzeige', children="0.00 mA")
-        ]),
-        html.Div(id='ueberstrom-warnung', style={'color': 'red', 'fontWeight': 'bold', 'marginTop': '10px'})
     ]),
 ])
 
@@ -195,33 +157,25 @@ def update_kalibrierung(n_clicks):
 # Callback 2 & 3: Spannungseingabe und Slider synchronisieren
 @app.callback(
     Output('spannung-slider', 'value'),
-    Input('spannung-input', 'value'),
-    State('overcurrent-flag', 'data'),
+    Input('spannung-input', 'value')
 )
-def update_slider(value, overcurrent):
-    if overcurrent: return no_update
+def update_slider(value):
     return value
 
 @app.callback(
     Output('spannung-input', 'value'),
-    Input('spannung-slider', 'value'),
-    State('overcurrent-flag', 'data'),
+    Input('spannung-slider', 'value')
 )
-def update_input(value, overcurrent):
-    if overcurrent: return no_update
+def update_input(value):
     return value
 
 # Callback 4: Spannung setzen
 @app.callback(
     Output('spannung-status', 'children'),
     Input('spannung-input', 'value'),
-    [State('kalibrier-tabelle-store', 'data'),
-     State('overcurrent-flag', 'data')]
+    State('kalibrier-tabelle-store', 'data')
 )
-def set_voltage(ziel_spannung, kalibrier_tabelle, overcurrent):
-    if overcurrent:
-        return "ÜBERSTROM! Steuerung deaktiviert."
-    
+def set_voltage(ziel_spannung, kalibrier_tabelle):
     ctx = dash.callback_context
     if not ctx.triggered:
         return "Bitte zuerst kalibrieren und dann Spannung einstellen."
@@ -237,39 +191,6 @@ def set_voltage(ziel_spannung, kalibrier_tabelle, overcurrent):
         status_msg = f"Fehler: {e}"
 
     return status_msg
-    
-# Callback 5: Stromüberwachung und Überstromschutz
-@app.callback(
-    Output('strom-anzeige', 'children'),
-    Output('ueberstrom-warnung', 'children'),
-    Output('overcurrent-flag', 'data'),
-    Output('spannung-slider', 'disabled'),
-    Output('spannung-input', 'disabled'),
-    Output('start-kalibrierung-btn', 'disabled'),
-    Input('interval-strommessung', 'n_intervals'),
-    State('overcurrent-flag', 'data')
-)
-def update_current(n, overcurrent):
-    if overcurrent:
-        # Zustand nach Überstrom beibehalten
-        warnung = f"ÜBERSTROM! DAC auf 0 gesetzt. Seite neu laden zum Zurücksetzen."
-        return "---", warnung, True, True, True, True
-
-    try:
-        strom_mA = get_corrected_current_mA()
-        
-        # Überstromschutz
-        if strom_mA > MAX_STROM_MA:
-            write_dac(0) # WICHTIG: SOFORT ABSCHALTEN
-            warnung = f"ÜBERSTROM ({strom_mA:.1f} mA > {MAX_STROM_MA:.1f} mA)! Spannung wurde abgeschaltet."
-            return f"{strom_mA:.2f} mA", warnung, True, True, True, True
-        
-        # Normalbetrieb
-        return f"{strom_mA:.2f} mA", "", False, False, False, False
-
-    except Exception as e:
-        return "Fehler", f"Fehler bei Strommessung: {e}", no_update, no_update, no_update, no_update
-
 
 # ----------------- Hauptprogramm -----------------
 if __name__ == "__main__":
