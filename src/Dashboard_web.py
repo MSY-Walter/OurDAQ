@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Optimiertes OurDAQ Dashboard
+OurDAQ Dashboard
 """
 
 import sys
@@ -42,8 +42,8 @@ MODULES = {
     'dmm': ModuleConfig('Digitalmultimeter', 'DMM_web.py', 8050, '#3498db'),
     'funktionsgenerator': ModuleConfig('Funktionsgenerator', 'Test/Funktionsgenerator_web.py', 8060, '#e74c3c'),
     'oszilloskop': ModuleConfig('Oszilloskop', 'Oszilloskop_web.py', 8080, '#27ae60'),
-    'netzteil_plus': ModuleConfig('Netzteil_plus_web', 'Netzteil_plus_web.py', 8071, '#f39c12'),
-    'netzteil_minus': ModuleConfig('Netzteil_minus_web', 'Netzteil_minus_web.py', 8072, '#f39c12'),
+    'netzteil_plus': ModuleConfig('Netzteil positiv', 'Netzteil_plus_web.py', 8071, '#f39c12'),
+    'netzteil_minus': ModuleConfig('Netzteil negativ', 'Netzteil_minus_web.py', 8072, '#f39c12'),
     'diodenkennlinie': ModuleConfig('Diodenkennlinie', script='Diodenkennlinie.ipynb', type='notebook', color='#9b59b6'),
     'filterkennlinie': ModuleConfig('Filterkennlinie', script='Test/Filterkennlinie.ipynb', type='notebook', color='#3498db')
 }
