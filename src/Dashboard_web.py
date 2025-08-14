@@ -371,9 +371,9 @@ class UIComponents:
             html.Div(buttons_row1, style={'textAlign': 'center'}),
             html.Div(buttons_row2, style={'textAlign': 'center'}),
             html.Div([
-                html.P("Hinweis: Um Jupyter Notebooks zu verwenden, starten Sie den Jupyter-Server in einem separaten Terminal mit:",
+                html.P("Hinweis: Um Diodenkennlinien und Filterkennlinien zu verwenden, starten Sie den Jupyter-Server in einem separaten Terminal mit:",
                        style={'textAlign': 'center', 'marginTop': '20px', 'color': '#555'}),
-                html.Code("jupyter lab --ip=0.0.0.0 --port=8888 --no-browser", 
+                html.Code("uv run jupyter lab", 
                           style={'display': 'block', 'textAlign': 'center', 'padding': '10px', 'backgroundColor': '#eee', 
                                  'borderRadius': '5px', 'marginTop': '10px', 'fontFamily': 'monospace'})
             ], style={'marginTop': '20px'})
