@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """
-Einfaches Web-Interface für Labornetzteil – Negative Spannung
-Exakt wie das ursprüngliche Programm, nur mit Flask Web-Interface
+Dash Web-Interface für Labornetzteil – Negative Spannung
+Exakt wie das ursprüngliche Programm, nur mit Dash
 """
 
-from flask import Flask, render_template_string, request, redirect, url_for
+import dash
+from dash import dcc, html, Input, Output, State, callback_context
+import plotly.graph_objs as go
 import spidev
 import time
 import lgpio
 from daqhats import mcc118, OptionFlags, HatIDs, HatError
 from daqhats_utils import select_hat_device, chan_list_to_mask
 import threading
-import signal
-import sys
+import numpy as np
 
 # ----------------- Konstanten -----------------
 SHUNT_WIDERSTAND = 0.1      # Ohm
@@ -42,11 +43,10 @@ lgpio.gpio_write(gpio_handle, CS_PIN, 1)  # CS inaktiv (HIGH)
 
 # ----------------- Globale Variablen -----------------
 monitoring_active = False
-current_status = "Bereit"
+current_status = "System bereit"
 current_voltage = 0.0
 current_current = 0.0
-
-app = Flask(__name__)
+status_log = []
 
 # ----------------- DAC Funktionen -----------------
 def write_dac(value):
@@ -61,30 +61,25 @@ def write_dac(value):
     spi.xfer2([high_byte, low_byte])
     lgpio.gpio_write(gpio_handle, CS_PIN, 1)
 
-# ----------------- Kalibrierung (Spannungs-Mapping) -----------------
+# ----------------- Kalibrierung -----------------
 def kalibrieren(sp_step=32, settle=0.05):
-    """
-    Führt DAC von 0..4095 mit Schritt sp_step, misst MCC118 Channel 0,
-    und füllt kalibrier_tabelle mit (gemessene_spannung_V, dac_wert).
-    Nur negative Spannungen werden gespeichert.
-    """
+    """Kalibrierung wie im Original"""
     global kalibrier_tabelle, current_status
     kalibrier_tabelle.clear()
     current_status = "Kalibrierung läuft..."
-    print("\nStarte Kalibrierung (Negative Spannung)...")
+    add_log("Starte Kalibrierung...")
+    
     address = select_hat_device(HatIDs.MCC_118)
     hat = mcc118(address)
 
     for dac_wert in range(0, 4096, sp_step):
         write_dac(dac_wert)
         time.sleep(settle)
-        spannung = hat.a_in_read(0)  # Channel 0 misst Ausgangsspannung
-        # Nur negative Spannungen speichern, andere ignorieren
+        spannung = hat.a_in_read(0)
         if spannung <= 0:
             kalibrier_tabelle.append((spannung, dac_wert))
-            print(f"  DAC {dac_wert:4d} -> {spannung:8.5f} V")
 
-    # Sicherstellen, dass DAC 4095 auch dabei ist
+    # DAC 4095 sicherstellen
     if not any(dac == 4095 for _, dac in kalibrier_tabelle):
         write_dac(4095)
         time.sleep(settle)
@@ -95,7 +90,7 @@ def kalibrieren(sp_step=32, settle=0.05):
     write_dac(0)
     kalibrier_tabelle.sort(key=lambda x: x[0])
     current_status = f"Kalibriert ({len(kalibrier_tabelle)} Punkte)"
-    print("Kalibrierung abgeschlossen.")
+    add_log(f"Kalibrierung abgeschlossen: {len(kalibrier_tabelle)} Punkte")
 
 def spannung_zu_dac_interpoliert(ziel_spannung):
     """Lineare Interpolation zwischen Kalibrierpunkten -> DAC-Wert (int)."""
@@ -103,21 +98,21 @@ def spannung_zu_dac_interpoliert(ziel_spannung):
         raise RuntimeError("Keine Kalibrierdaten vorhanden. Bitte kalibrieren.")
     if ziel_spannung > 0:
         raise ValueError("Nur negative Spannungen erlaubt.")
-    # Randbehandlung
+    
     if ziel_spannung <= kalibrier_tabelle[0][0]:
         return kalibrier_tabelle[0][1]
     if ziel_spannung >= kalibrier_tabelle[-1][0]:
         return kalibrier_tabelle[-1][1]
-    # Suche Intervall
+    
     for i in range(len(kalibrier_tabelle) - 1):
         u1, d1 = kalibrier_tabelle[i]
         u2, d2 = kalibrier_tabelle[i+1]
         if u1 <= ziel_spannung <= u2:
             if u2 == u1:
                 return d1
-            # lineare Interpolation
             dac = d1 + (d2 - d1) * (ziel_spannung - u1) / (u2 - u1)
             return int(round(dac))
+    
     raise ValueError("Interpolation fehlgeschlagen.")
 
 # ----------------- Stromkorrektur -----------------
@@ -126,12 +121,12 @@ def apply_strom_korrektur(i_mcc_mA):
 
 def kalibriere_stromkorrektur(mcc_list_mA, true_list_mA):
     global corr_a, corr_b
-    import numpy as np
     mcc = np.array(mcc_list_mA, dtype=float)
     true = np.array(true_list_mA, dtype=float)
     A = np.vstack([np.ones_like(mcc), mcc]).T
     a, b = np.linalg.lstsq(A, true, rcond=None)[0]
     corr_a, corr_b = float(a), float(b)
+    add_log(f"Stromkorrektur aktualisiert: a={corr_a:.6f}, b={corr_b:.9f}")
 
 # ----------------- Stromüberwachung -----------------
 def strom_ueberwachung(max_strom_ma=MAX_STROM_MA):
@@ -148,7 +143,7 @@ def strom_ueberwachung(max_strom_ma=MAX_STROM_MA):
     hat.a_in_scan_start(channel_mask, 0, scan_rate, options)
 
     current_status = "Stromüberwachung aktiv"
-    print("\nStromüberwachung läuft")
+    add_log("Stromüberwachung gestartet")
 
     try:
         while monitoring_active:
@@ -162,12 +157,14 @@ def strom_ueberwachung(max_strom_ma=MAX_STROM_MA):
                 if current_true_mA > max_strom_ma:
                     write_dac(0)
                     current_status = f"ÜBERSTROM: {current_true_mA:.1f} mA"
+                    add_log(f"ÜBERSTROM ERKANNT: {current_true_mA:.1f} mA > {max_strom_ma:.1f} mA")
                     monitoring_active = False
                     break
             time.sleep(0.1)
 
     except Exception as e:
-        current_status = f"Fehler: {e}"
+        current_status = f"Überwachung Fehler: {e}"
+        add_log(f"Überwachung Fehler: {e}")
 
     finally:
         try:
@@ -176,88 +173,17 @@ def strom_ueberwachung(max_strom_ma=MAX_STROM_MA):
             pass
         if monitoring_active:
             current_status = "Überwachung gestoppt"
+            add_log("Überwachung gestoppt")
         monitoring_active = False
 
-# ----------------- Web Routes -----------------
-@app.route('/')
-def index():
-    return render_template_string(HTML_TEMPLATE, 
-                                  status=current_status,
-                                  voltage=current_voltage,
-                                  current=current_current,
-                                  corr_a=corr_a,
-                                  corr_b=corr_b,
-                                  calibrated=len(kalibrier_tabelle) > 0,
-                                  monitoring=monitoring_active)
+# ----------------- Hilfsfunktionen -----------------
+def add_log(message):
+    global status_log
+    timestamp = time.strftime("%H:%M:%S")
+    status_log.append(f"[{timestamp}] {message}")
+    if len(status_log) > 10:  # Nur die letzten 10 Einträge behalten
+        status_log = status_log[-10:]
 
-@app.route('/kalibrieren', methods=['POST'])
-def web_kalibrieren():
-    global monitoring_active
-    if monitoring_active:
-        return redirect(url_for('index'))
-    
-    threading.Thread(target=kalibrieren, daemon=True).start()
-    time.sleep(0.5)  # Kurz warten damit Status aktualisiert wird
-    return redirect(url_for('index'))
-
-@app.route('/spannung_setzen', methods=['POST'])
-def web_spannung_setzen():
-    global current_voltage, monitoring_active
-    
-    try:
-        ziel = float(request.form['spannung'])
-        if ziel > 0 or ziel < MAX_SPANNUNG_NEGATIV:
-            return redirect(url_for('index'))
-        
-        dac = spannung_zu_dac_interpoliert(ziel)
-        write_dac(dac)
-        current_voltage = ziel
-        
-        # Stromüberwachung starten
-        if not monitoring_active:
-            monitoring_active = True
-            threading.Thread(target=strom_ueberwachung, daemon=True).start()
-            
-    except Exception as e:
-        print(f"Fehler: {e}")
-    
-    return redirect(url_for('index'))
-
-@app.route('/stopp')
-def web_stopp():
-    global monitoring_active, current_voltage, current_current, current_status
-    monitoring_active = False
-    write_dac(0)
-    current_voltage = 0.0
-    current_current = 0.0
-    current_status = "Gestoppt"
-    return redirect(url_for('index'))
-
-@app.route('/korrektur', methods=['POST'])
-def web_korrektur():
-    try:
-        # Parse input pairs
-        input_text = request.form['korrektur_daten']
-        lines = [line.strip() for line in input_text.split('\n') if line.strip()]
-        
-        mcc_values = []
-        true_values = []
-        
-        for line in lines:
-            parts = line.split()
-            if len(parts) == 2:
-                mcc_values.append(float(parts[0]))
-                true_values.append(float(parts[1]))
-        
-        if len(mcc_values) >= 2:
-            kalibriere_stromkorrektur(mcc_values, true_values)
-            
-    except Exception as e:
-        print(f"Korrektur Fehler: {e}")
-    
-    return redirect(url_for('index'))
-
-# ----------------- Cleanup -----------------
 def cleanup():
     global monitoring_active
     monitoring_active = False
@@ -265,138 +191,192 @@ def cleanup():
     spi.close()
     lgpio.gpiochip_close(gpio_handle)
 
-def signal_handler(sig, frame):
-    cleanup()
-    sys.exit(0)
+# ----------------- Dash App -----------------
+app = dash.Dash(__name__)
 
-signal.signal(signal.SIGINT, signal_handler)
+app.layout = html.Div([
+    html.H1("⚡ Labornetzteil Steuerung", style={'textAlign': 'center', 'color': '#2c3e50'}),
+    html.H2("Negative Spannung (-10V bis 0V)", style={'textAlign': 'center', 'color': '#7f8c8d'}),
+    
+    # Status Anzeige
+    html.Div([
+        html.H3("📊 Status"),
+        html.Div(id='status-display'),
+    ], style={'border': '2px solid #3498db', 'padding': '15px', 'margin': '10px', 'borderRadius': '10px'}),
+    
+    # Kalibrierung
+    html.Div([
+        html.H3("🔧 Kalibrierung"),
+        html.Button('Kalibrierung starten', id='cal-button', n_clicks=0, 
+                   style={'padding': '10px', 'backgroundColor': '#f39c12', 'color': 'white', 'border': 'none', 'borderRadius': '5px'}),
+        html.Div(id='cal-status')
+    ], style={'border': '2px solid #f39c12', 'padding': '15px', 'margin': '10px', 'borderRadius': '10px'}),
+    
+    # Spannung einstellen
+    html.Div([
+        html.H3("⚡ Spannung einstellen"),
+        dcc.Input(id='voltage-input', type='number', min=-10, max=0, step=0.001, value=0, 
+                 placeholder='Spannung in V'),
+        html.Button('Spannung setzen', id='set-voltage-button', n_clicks=0,
+                   style={'padding': '10px', 'margin': '10px', 'backgroundColor': '#27ae60', 'color': 'white', 'border': 'none', 'borderRadius': '5px'}),
+        html.Div(id='voltage-status')
+    ], style={'border': '2px solid #27ae60', 'padding': '15px', 'margin': '10px', 'borderRadius': '10px'}),
+    
+    # Notaus
+    html.Div([
+        html.H3("🚨 Notaus"),
+        html.Button('STOPP - Netzteil AUS', id='stop-button', n_clicks=0,
+                   style={'padding': '15px', 'backgroundColor': '#e74c3c', 'color': 'white', 'border': 'none', 'borderRadius': '5px', 'fontSize': '16px', 'fontWeight': 'bold'})
+    ], style={'border': '2px solid #e74c3c', 'padding': '15px', 'margin': '10px', 'borderRadius': '10px'}),
+    
+    # Stromkorrektur
+    html.Div([
+        html.H3("📈 Stromkorrektur"),
+        html.P("Messwertpaare eingeben (eine Zeile pro Paar: mcc_mA true_mA):"),
+        dcc.Textarea(id='correction-input', placeholder='6.0 0.328\n12.5 0.654\n18.2 0.982',
+                    style={'width': '100%', 'height': '100px'}),
+        html.Button('Korrektur berechnen', id='correction-button', n_clicks=0,
+                   style={'padding': '10px', 'margin': '10px', 'backgroundColor': '#3498db', 'color': 'white', 'border': 'none', 'borderRadius': '5px'}),
+        html.Div(id='correction-status')
+    ], style={'border': '2px solid #3498db', 'padding': '15px', 'margin': '10px', 'borderRadius': '10px'}),
+    
+    # Log
+    html.Div([
+        html.H3("📋 Status Log"),
+        html.Div(id='log-display', style={'height': '200px', 'overflow': 'auto', 'backgroundColor': '#2c3e50', 'color': '#2ecc71', 'fontFamily': 'monospace', 'padding': '10px', 'borderRadius': '5px'})
+    ], style={'border': '2px solid #95a5a6', 'padding': '15px', 'margin': '10px', 'borderRadius': '10px'}),
+    
+    # Interval für Updates
+    dcc.Interval(id='interval-component', interval=2000, n_intervals=0)  # Update alle 2 Sekunden
+])
 
-# ----------------- HTML Template -----------------
-HTML_TEMPLATE = '''
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Labornetzteil Steuerung</title>
-    <meta charset="UTF-8">
-    <meta http-equiv="refresh" content="2">
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }
-        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; }
-        .header { text-align: center; color: #333; border-bottom: 2px solid #007acc; padding-bottom: 10px; }
-        .status { background: #e8f4f8; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 4px solid #007acc; }
-        .form-group { margin: 15px 0; padding: 15px; background: #f9f9f9; border-radius: 5px; }
-        .form-group h3 { margin-top: 0; color: #007acc; }
-        input[type="number"], textarea { width: 200px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
-        textarea { width: 300px; height: 100px; }
-        button { padding: 10px 20px; margin: 5px; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; }
-        .btn-primary { background: #007acc; color: white; }
-        .btn-success { background: #28a745; color: white; }
-        .btn-danger { background: #dc3545; color: white; font-weight: bold; }
-        .btn-warning { background: #ffc107; color: black; }
-        .btn:hover { opacity: 0.8; }
-        .status-active { color: #28a745; font-weight: bold; }
-        .status-error { color: #dc3545; font-weight: bold; }
-        .info { background: #d1ecf1; padding: 10px; margin: 10px 0; border-radius: 4px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>⚡ Labornetzteil Steuerung</h1>
-            <h2>Negative Spannung (-10V bis 0V)</h2>
-        </div>
+# ----------------- Callbacks -----------------
+@app.callback(
+    Output('status-display', 'children'),
+    [Input('interval-component', 'n_intervals')]
+)
+def update_status(n):
+    return html.Div([
+        html.P(f"System: {current_status}"),
+        html.P(f"Ausgangsspannung: {current_voltage:.3f} V"),
+        html.P(f"Ausgangsstrom: {current_current:.2f} mA"),
+        html.P(f"Kalibriert: {'Ja' if kalibrier_tabelle else 'Nein'} ({len(kalibrier_tabelle)} Punkte)"),
+        html.P(f"Stromkorrektur: i_true = {corr_a:.6f} + {corr_b:.9f} * i_mcc"),
+        html.P(f"Überwachung: {'Aktiv' if monitoring_active else 'Inaktiv'}")
+    ])
 
-        <div class="status">
-            <h3>📊 Aktueller Status</h3>
-            <p><strong>System:</strong> 
-                {% if 'Überstrom' in status or 'Fehler' in status %}
-                    <span class="status-error">{{ status }}</span>
-                {% elif monitoring %}
-                    <span class="status-active">{{ status }}</span>
-                {% else %}
-                    {{ status }}
-                {% endif %}
-            </p>
-            <p><strong>Ausgangsspannung:</strong> {{ "%.3f"|format(voltage) }} V</p>
-            <p><strong>Ausgangsstrom:</strong> {{ "%.2f"|format(current) }} mA</p>
-            <p><strong>Kalibriert:</strong> {{ "Ja" if calibrated else "Nein" }}</p>
-            <p><strong>Stromkorrektur:</strong> i_true = {{ "%.6f"|format(corr_a) }} + {{ "%.9f"|format(corr_b) }} * i_mcc</p>
-        </div>
+@app.callback(
+    Output('cal-status', 'children'),
+    [Input('cal-button', 'n_clicks')]
+)
+def start_calibration(n_clicks):
+    if n_clicks > 0:
+        if not monitoring_active:
+            threading.Thread(target=kalibrieren, daemon=True).start()
+            return "Kalibrierung gestartet..."
+        else:
+            return "Kalibrierung nicht möglich - Überwachung aktiv"
+    return ""
 
-        <div class="form-group">
-            <h3>🔧 Kalibrierung</h3>
-            <form method="POST" action="/kalibrieren">
-                <button type="submit" class="btn-warning" 
-                        {% if monitoring %}disabled{% endif %}>
-                    Kalibrierung starten
-                </button>
-            </form>
-            <div class="info">
-                <small>Führt automatische Kalibrierung durch (dauert ca. 1-2 Minuten)</small>
-            </div>
-        </div>
+@app.callback(
+    Output('voltage-status', 'children'),
+    [Input('set-voltage-button', 'n_clicks')],
+    [State('voltage-input', 'value')]
+)
+def set_voltage(n_clicks, voltage):
+    global current_voltage, monitoring_active
+    
+    if n_clicks > 0 and voltage is not None:
+        try:
+            if voltage > 0 or voltage < MAX_SPANNUNG_NEGATIV:
+                return f"Fehler: Spannung muss zwischen {MAX_SPANNUNG_NEGATIV} und 0 V liegen"
+            
+            if not kalibrier_tabelle:
+                return "Fehler: Erst kalibrieren!"
+            
+            if monitoring_active:
+                return "Fehler: Überwachung bereits aktiv - erst stoppen"
+            
+            dac = spannung_zu_dac_interpoliert(voltage)
+            write_dac(dac)
+            current_voltage = voltage
+            add_log(f"Spannung gesetzt: {voltage:.3f} V (DAC: {dac})")
+            
+            # Stromüberwachung starten
+            monitoring_active = True
+            threading.Thread(target=strom_ueberwachung, daemon=True).start()
+            
+            return f"Spannung gesetzt: {voltage:.3f} V - Überwachung gestartet"
+            
+        except Exception as e:
+            return f"Fehler: {e}"
+    
+    return ""
 
-        <div class="form-group">
-            <h3>⚡ Spannung einstellen</h3>
-            <form method="POST" action="/spannung_setzen">
-                <label>Zielspannung (V): </label>
-                <input type="number" name="spannung" step="0.001" min="-10" max="0" value="0" required>
-                <button type="submit" class="btn-success" 
-                        {% if not calibrated or monitoring %}disabled{% endif %}>
-                    Spannung setzen
-                </button>
-            </form>
-            <div class="info">
-                <small>Startet automatisch die Stromüberwachung</small>
-            </div>
-        </div>
+@app.callback(
+    Output('log-display', 'children'),
+    [Input('stop-button', 'n_clicks'), Input('interval-component', 'n_intervals')]
+)
+def update_log_and_stop(stop_clicks, n):
+    global monitoring_active, current_voltage, current_current, current_status
+    
+    ctx = callback_context
+    if ctx.triggered:
+        prop_id = ctx.triggered[0]['prop_id'].split('.')[0]
+        if prop_id == 'stop-button' and stop_clicks > 0:
+            monitoring_active = False
+            write_dac(0)
+            current_voltage = 0.0
+            current_current = 0.0
+            current_status = "Gestoppt - Netzteil AUS"
+            add_log("NOTAUS aktiviert - System gestoppt")
+    
+    # Log anzeigen
+    log_items = []
+    for log_entry in status_log:
+        log_items.append(html.Div(log_entry))
+    
+    return log_items
 
-        <div class="form-group">
-            <h3>🚨 Notaus</h3>
-            <a href="/stopp">
-                <button class="btn-danger">STOPP - Netzteil AUS</button>
-            </a>
-            <div class="info">
-                <small>Setzt DAC auf 0 und stoppt Überwachung</small>
-            </div>
-        </div>
+@app.callback(
+    Output('correction-status', 'children'),
+    [Input('correction-button', 'n_clicks')],
+    [State('correction-input', 'value')]
+)
+def update_correction(n_clicks, input_text):
+    if n_clicks > 0 and input_text:
+        try:
+            lines = [line.strip() for line in input_text.split('\n') if line.strip()]
+            mcc_values = []
+            true_values = []
+            
+            for line in lines:
+                parts = line.split()
+                if len(parts) == 2:
+                    mcc_values.append(float(parts[0]))
+                    true_values.append(float(parts[1]))
+            
+            if len(mcc_values) >= 2:
+                kalibriere_stromkorrektur(mcc_values, true_values)
+                return f"Korrektur aktualisiert: a={corr_a:.6f}, b={corr_b:.9f}"
+            else:
+                return "Fehler: Mindestens 2 Wertepaaare erforderlich"
+                
+        except Exception as e:
+            return f"Fehler: {e}"
+    
+    return ""
 
-        <div class="form-group">
-            <h3>📈 Stromkorrektur</h3>
-            <form method="POST" action="/korrektur">
-                <p>Messwertpaare eingeben (eine Zeile pro Paar: mcc_mA true_mA):</p>
-                <textarea name="korrektur_daten" placeholder="6.0 0.328
-12.5 0.654
-18.2 0.982"></textarea><br>
-                <button type="submit" class="btn-primary">Korrektur berechnen</button>
-            </form>
-            <div class="info">
-                <small>Mindestens 2 Messwertpaare erforderlich</small>
-            </div>
-        </div>
-
-        <div class="info">
-            <p><strong>Hinweise:</strong></p>
-            <ul>
-                <li>Seite aktualisiert sich automatisch alle 2 Sekunden</li>
-                <li>Bei Überstrom wird das Netzteil automatisch abgeschaltet</li>
-                <li>Kalibrierung muss vor der ersten Nutzung durchgeführt werden</li>
-            </ul>
-        </div>
-    </div>
-</body>
-</html>
-'''
-
+# ----------------- Main -----------------
 if __name__ == '__main__':
     # Automatische Kalibrierung beim Start
-    print("Starte automatische Kalibrierung...")
+    add_log("System gestartet")
+    add_log("Starte automatische Kalibrierung...")
     kalibrieren()
     
-    print("Starte Webserver auf Port 5000...")
-    print("Zugriff über: http://0.0.0.0:5000")
+    print("Dash Server gestartet auf http://0.0.0.0:8050")
     
     try:
-        app.run(host='0.0.0.0', port=5000, debug=False)
+        app.run_server(host='0.0.0.0', port=8050, debug=False)
     except KeyboardInterrupt:
         cleanup()
