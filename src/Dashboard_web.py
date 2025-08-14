@@ -1,29 +1,6 @@
 #!/usr/bin/env python3
 """
 OurDAQ Dashboard
-================
-
-**HINWEIS: ANLEITUNG ZUR NUTZUNG VON JUPYTER NOTEBOOKS**
-
-Obwohl die direkten "Kennlinie"-Buttons entfernt wurden, können Sie weiterhin
-Jupyter Notebooks (wie z.B. Diodenkennlinie.ipynb) für Messungen und Analysen verwenden.
-Dafür müssen Sie den Jupyter Lab Server manuell starten.
-
-**Schritt 1: Jupyter Lab installieren (falls noch nicht geschehen)**
-Öffnen Sie ein Terminal und geben Sie den folgenden Befehl ein:
-$ pip install jupyterlab
-
-**Schritt 2: Jupyter Lab Server starten**
-1. Öffnen Sie ein **zweites Terminal**.
-2. Navigieren Sie in das Verzeichnis, in dem dieses Skript und Ihre Notebooks (.ipynb-Dateien) liegen.
-3. Führen Sie den folgenden Befehl aus, um den Server zu starten. Lassen Sie dieses Terminal
-   während der gesamten Nutzung geöffnet.
-
-   $ jupyter lab --ip=0.0.0.0 --port=8888 --no-browser
-
-4. Nach dem Start zeigt Ihnen das Terminal eine URL an (z.B. http://127.0.0.1:8888/lab).
-   Öffnen Sie diese URL in Ihrem Browser, um auf Ihre Dateien zuzugreifen und die Notebooks
-   zu starten.
 """
 
 import sys
@@ -61,27 +38,12 @@ class SystemConfig:
     title: str = 'OurDAQ Datenerfassungssystem'
 
 # --- MODUL-DEFINITIONEN ---
-# Die Module für 'diodenkennlinie' und 'filterkennlinie' wurden entfernt.
 MODULES = {
     'dmm': ModuleConfig('Digitalmultimeter', 'DMM_web.py', 8050, '#3498db'),
     'funktionsgenerator': ModuleConfig('Funktionsgenerator', 'Test/Funktionsgenerator_web.py', 8060, '#e74c3c'),
     'oszilloskop': ModuleConfig('Oszilloskop', 'Oszilloskop_web.py', 8080, '#27ae60'),
     'netzteil_plus': ModuleConfig('Netzteil positiv', 'Netzteil_plus_web.py', 8071, '#f39c12'),
     'netzteil_minus': ModuleConfig('Netzteil negativ', 'Netzteil_minus_web.py', 8072, '#f39c12'),
-    # 'diodenkennlinie': ModuleConfig(
-    #     name='Diodenkennlinie',
-    #     script='Diodenkennlinie.ipynb',
-    #     type='notebook_link',
-    #     port=8888, # Jupyter-Server Port
-    #     color='#9b59b6'
-    # ),
-    # 'filterkennlinie': ModuleConfig(
-    #     name='Filterkennlinie',
-    #     script='Test/Filterkennlinie.ipynb',
-    #     type='notebook_link',
-    #     port=8888, # Jupyter-Server Port
-    #     color='#3498db'
-    # )
 }
 
 CONFIG = SystemConfig()
@@ -371,7 +333,6 @@ class UIComponents:
 
     @staticmethod
     def create_navigation_buttons(ip_address: str) -> html.Div:
-        buttons = []
         button_style = {
             'backgroundColor': '#2c3e50', 'color': 'white', 'border': 'none',
             'padding': '25px 50px', 'borderRadius': '15px', 'cursor': 'pointer',
@@ -381,27 +342,41 @@ class UIComponents:
             'transition': 'all 0.3s ease'
         }
 
-        for module_id, config in MODULES.items():
+        # Erste Reihe Buttons
+        buttons_row1 = []
+        for module_id in ['dmm', 'funktionsgenerator', 'oszilloskop']:
+            config = MODULES[module_id]
             if config.type == 'dash_app' and config.port:
-                buttons.append(
+                buttons_row1.append(
                     html.A(config.name,
                            href=f"http://{ip_address}:{config.port}",
                            target="_blank",
                            style={**button_style, 'backgroundColor': config.color})
                 )
-            # Der Code für "notebook_link" bleibt erhalten, falls Sie ihn später wieder benötigen
-            elif config.type == 'notebook_link' and config.port and config.script:
-                notebook_url = f"http://{ip_address}:{config.port}/lab/tree/{config.script}"
-                buttons.append(
+        
+        # Zweite Reihe Buttons
+        buttons_row2 = []
+        for module_id in ['netzteil_plus', 'netzteil_minus']:
+            config = MODULES[module_id]
+            if config.type == 'dash_app' and config.port:
+                buttons_row2.append(
                     html.A(config.name,
-                           href=notebook_url,
+                           href=f"http://{ip_address}:{config.port}",
                            target="_blank",
                            style={**button_style, 'backgroundColor': config.color})
                 )
 
         return html.Div([
             html.H2("Module & Funktionen", style={'color': '#2c3e50', 'marginBottom': '25px', 'textAlign': 'center'}),
-            html.Div(buttons, style={'textAlign': 'center'})
+            html.Div(buttons_row1, style={'textAlign': 'center'}),
+            html.Div(buttons_row2, style={'textAlign': 'center'}),
+            html.Div([
+                html.P("Hinweis: Um Jupyter Notebooks zu verwenden, starten Sie den Jupyter-Server in einem separaten Terminal mit:",
+                       style={'textAlign': 'center', 'marginTop': '20px', 'color': '#555'}),
+                html.Code("jupyter lab --ip=0.0.0.0 --port=8888 --no-browser", 
+                          style={'display': 'block', 'textAlign': 'center', 'padding': '10px', 'backgroundColor': '#eee', 
+                                 'borderRadius': '5px', 'marginTop': '10px', 'fontFamily': 'monospace'})
+            ], style={'marginTop': '20px'})
         ], style={
             'backgroundColor': 'white', 'padding': '25px', 'borderRadius': '15px',
             'marginBottom': '30px', 'boxShadow': '0 4px 15px rgba(0,0,0,0.1)'
