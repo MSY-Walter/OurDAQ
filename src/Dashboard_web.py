@@ -3,23 +3,27 @@
 OurDAQ Dashboard
 ================
 
-**ANLEITUNG ZUR VERWENDUNG DER NOTEBOOK-LINKS:**
+**HINWEIS: ANLEITUNG ZUR NUTZUNG VON JUPYTER NOTEBOOKS**
 
-Dieses Skript wurde so modifiziert, dass die "Kennlinie"-Buttons als direkte Links zu einem
-Jupyter Lab Server funktionieren. Damit dies funktioniert, müssen Sie zwei Schritte ausführen:
+Obwohl die direkten "Kennlinie"-Buttons entfernt wurden, können Sie weiterhin
+Jupyter Notebooks (wie z.B. Diodenkennlinie.ipynb) für Messungen und Analysen verwenden.
+Dafür müssen Sie den Jupyter Lab Server manuell starten.
 
-1.  **Jupyter Lab installieren (falls noch nicht geschehen):**
-    pip install jupyterlab
+**Schritt 1: Jupyter Lab installieren (falls noch nicht geschehen)**
+Öffnen Sie ein Terminal und geben Sie den folgenden Befehl ein:
+$ pip install jupyterlab
 
-2.  **Jupyter Lab Server starten:**
-    Öffnen Sie ein ZWEITES Terminal, navigieren Sie in dasselbe Verzeichnis wie dieses Skript
-    und führen Sie den folgenden Befehl aus. Lassen Sie dieses Terminal laufen, solange Sie
-    das Dashboard verwenden.
+**Schritt 2: Jupyter Lab Server starten**
+1. Öffnen Sie ein **zweites Terminal**.
+2. Navigieren Sie in das Verzeichnis, in dem dieses Skript und Ihre Notebooks (.ipynb-Dateien) liegen.
+3. Führen Sie den folgenden Befehl aus, um den Server zu starten. Lassen Sie dieses Terminal
+   während der gesamten Nutzung geöffnet.
 
-    jupyter lab --ip=0.0.0.0 --port=8888 --no-browser
+   $ jupyter lab --ip=0.0.0.0 --port=8888 --no-browser
 
-Danach können Sie dieses Python-Skript wie gewohnt starten. Die Buttons werden die Notebooks
-korrekt in Ihrem Browser öffnen.
+4. Nach dem Start zeigt Ihnen das Terminal eine URL an (z.B. http://127.0.0.1:8888/lab).
+   Öffnen Sie diese URL in Ihrem Browser, um auf Ihre Dateien zuzugreifen und die Notebooks
+   zu starten.
 """
 
 import sys
@@ -46,7 +50,7 @@ class ModuleConfig:
     script: Optional[str] = None
     port: Optional[int] = None
     color: str = '#3498db'
-    type: str = 'dash_app'  # Mögliche Typen: 'dash_app', 'notebook_link'
+    type: str = 'dash_app'  # Mögliche Typen: 'dash_app'
 
 @dataclass
 class SystemConfig:
@@ -56,29 +60,28 @@ class SystemConfig:
     port: int = 8000
     title: str = 'OurDAQ Datenerfassungssystem'
 
-# --- MODIFIZIERTE MODUL-DEFINITIONEN ---
-# Der 'type' für die Notebooks wurde auf 'notebook_link' geändert.
-# Der 'port' verweist jetzt auf den Port des Jupyter-Servers.
+# --- MODUL-DEFINITIONEN ---
+# Die Module für 'diodenkennlinie' und 'filterkennlinie' wurden entfernt.
 MODULES = {
     'dmm': ModuleConfig('Digitalmultimeter', 'DMM_web.py', 8050, '#3498db'),
     'funktionsgenerator': ModuleConfig('Funktionsgenerator', 'Test/Funktionsgenerator_web.py', 8060, '#e74c3c'),
     'oszilloskop': ModuleConfig('Oszilloskop', 'Oszilloskop_web.py', 8080, '#27ae60'),
     'netzteil_plus': ModuleConfig('Netzteil positiv', 'Netzteil_plus_web.py', 8071, '#f39c12'),
     'netzteil_minus': ModuleConfig('Netzteil negativ', 'Netzteil_minus_web.py', 8072, '#f39c12'),
-    'diodenkennlinie': ModuleConfig(
-        name='Diodenkennlinie',
-        script='Diodenkennlinie.ipynb',
-        type='notebook_link',
-        port=8888, # Jupyter-Server Port
-        color='#9b59b6'
-    ),
-    'filterkennlinie': ModuleConfig(
-        name='Filterkennlinie',
-        script='Test/Filterkennlinie.ipynb',
-        type='notebook_link',
-        port=8888, # Jupyter-Server Port
-        color='#3498db'
-    )
+    # 'diodenkennlinie': ModuleConfig(
+    #     name='Diodenkennlinie',
+    #     script='Diodenkennlinie.ipynb',
+    #     type='notebook_link',
+    #     port=8888, # Jupyter-Server Port
+    #     color='#9b59b6'
+    # ),
+    # 'filterkennlinie': ModuleConfig(
+    #     name='Filterkennlinie',
+    #     script='Test/Filterkennlinie.ipynb',
+    #     type='notebook_link',
+    #     port=8888, # Jupyter-Server Port
+    #     color='#3498db'
+    # )
 }
 
 CONFIG = SystemConfig()
@@ -366,7 +369,6 @@ class UIComponents:
             'marginBottom': '25px', 'boxShadow': '0 4px 12px rgba(0,0,0,0.1)'
         })
 
-    # --- MODIFIZIERTE FUNKTION ZUM ERSTELLEN DER BUTTONS ---
     @staticmethod
     def create_navigation_buttons(ip_address: str) -> html.Div:
         buttons = []
@@ -380,7 +382,6 @@ class UIComponents:
         }
 
         for module_id, config in MODULES.items():
-            # Fall 1: Standard Dash App -> Link zur App
             if config.type == 'dash_app' and config.port:
                 buttons.append(
                     html.A(config.name,
@@ -388,14 +389,13 @@ class UIComponents:
                            target="_blank",
                            style={**button_style, 'backgroundColor': config.color})
                 )
-            # Fall 2: Jupyter Notebook -> Link zum Jupyter Lab Server
+            # Der Code für "notebook_link" bleibt erhalten, falls Sie ihn später wieder benötigen
             elif config.type == 'notebook_link' and config.port and config.script:
-                # Erstellt die URL für Jupyter Lab
                 notebook_url = f"http://{ip_address}:{config.port}/lab/tree/{config.script}"
                 buttons.append(
                     html.A(config.name,
                            href=notebook_url,
-                           target="_blank", # In neuem Tab öffnen
+                           target="_blank",
                            style={**button_style, 'backgroundColor': config.color})
                 )
 
@@ -443,7 +443,7 @@ app.layout = html.Div([
     html.Div([
         html.Div(id='system-overview'),
         html.Div(id='navigation-buttons'),
-        html.Div(id='main-content') # Dieses Div kann für zukünftige Inhalte bleiben
+        html.Div(id='main-content')
     ], style={
         'maxWidth': '1200px', 'margin': '0 auto', 'padding': '20px',
         'backgroundColor': '#f5f7fa', 'minHeight': '80vh'
@@ -475,12 +475,6 @@ def update_system_display(n_intervals):
     buttons = UIComponents.create_navigation_buttons(process_manager.ip_address)
     return overview, buttons
 
-
-# --- ENTFERNTER CALLBACK ---
-# Der Callback 'handle_notebook_buttons' wird nicht mehr benötigt, da die Navigation
-# nun über direkte HTML <a>-Links erfolgt. Er wurde ersatzlos gelöscht.
-
-
 # =============================================================================
 # INITIALIZATION
 # =============================================================================
@@ -490,16 +484,6 @@ def initialize_system():
     for module_id, config in MODULES.items():
         if config.type == 'dash_app':
             process_manager.start_module(module_id)
-
-    # Überprüfen, ob der Jupyter-Server erreichbar ist
-    jupyter_port = next((c.port for c in MODULES.values() if c.type == 'notebook_link'), None)
-    if jupyter_port:
-        try:
-            requests.get(f"http://{process_manager.ip_address}:{jupyter_port}", timeout=2)
-            Logger.info(f"Jupyter Server auf Port {jupyter_port} ist erreichbar.")
-        except requests.ConnectionError:
-            Logger.error(f"WARNUNG: Jupyter Server auf Port {jupyter_port} ist nicht erreichbar.")
-            Logger.error("Bitte stellen Sie sicher, dass der Jupyter Lab Server läuft.")
 
     dashboard_url = f"http://{process_manager.ip_address}:{CONFIG.port}"
     Logger.info(f"Dashboard wird geöffnet: {dashboard_url}")
