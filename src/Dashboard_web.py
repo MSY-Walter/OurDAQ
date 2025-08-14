@@ -373,7 +373,7 @@ class UIComponents:
             html.Div([
                 html.P("Hinweis: Um Diodenkennlinien und Filterkennlinien zu verwenden, starten Sie den Jupyter-Server in einem separaten Terminal mit:",
                        style={'textAlign': 'center', 'marginTop': '20px', 'color': '#555'}),
-                html.Code("uv run jupyter lab", 
+                html.Code("uv run jupyter lab --ip=0.0.0.0 --port=8888", 
                           style={'display': 'block', 'textAlign': 'center', 'padding': '10px', 'backgroundColor': '#eee', 
                                  'borderRadius': '5px', 'marginTop': '10px', 'fontFamily': 'monospace'})
             ], style={'marginTop': '20px'})
