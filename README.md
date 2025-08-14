@@ -81,7 +81,7 @@ Das System bietet folgende Standard-Messroutinen:
 
 ## Verwendung
 
-Hauptmenü in Web öffnen:
+Hauptmenü für alle Funktionalitäten in Web öffnen:
 
 ```bash
 cd ~/OurDAQ
@@ -95,24 +95,33 @@ cd ~/OurDAQ
 uv run src/<Dateiname>
 ```
 
-In Jupyter Notebook öffnen:
+In Jupyter Lab (Jupyter Notebook) öffnen:
 
 ```bash
 cd ~/OurDAQ
-uv run jupyter notebook
+uv run jupyter lab --ip=0.0.0.0 --port=8888
 ```
 
 ## Projektstruktur
 
 - `docs/`: Dokumentation
-- `src/`: Quellcode-Verzeichnis
-  - `Dashboard_web.py`: Hauptmenü in Web
-  - `Diodenkennlinie.ipynb`: Jupyter Notebook für Diodenkennlinie
-  - `DMM_web.py`: Digitalmultimeter in Web
+- `Test/`: Programme zu testen (noch in Bearbeitung)
   - `Filterkennlinie.ipynb`: Jupyter Notebook für Filterkennlinie
-  - `Funktionsgenerator_AD9833.py`: Datei zu Erzeugung der Signale mit AD9833
-  - `Funktionsgenerator_web.py`: Erzeugung der Signale mit AD9833 in Web
-  - `Netzteil_web.py`: Netzteilfunktion in Web
+  - `Funktionsgenerator_optimiert.py`: Erzeugung der Signale mit AD9833 (optimiert)
+  - `Funktionsgenerator_web.py`: Erzeugung der Signale mit AD9833 in web
+  - `Strommessung.py`: Strommessung von DMM
+- `src/`: Quellcode-Verzeichnis
+  - `daqhats_utils.py`: Bibliothek für Netzteil-Funktionalität
+  - `Dashboard_web.py`: Hauptmenü für alle Funktionalitäten in Web
+  - `Diodenkennlinie.ipynb`: Jupyter Notebook für Diodenkennlinie
+  - `Diodenkennlinie.py`: Diodenkennlinie darstellen
+  - `DMM_web.py`: Digitalmultimeter in Web
+  - `Filterkennlinie.py`: Filterkennlinie darstellen
+  - `Funktionsgenerator.py`: Erzeugung der Signale mit AD9833
+  - `Netzteil_minus_web.py`: Netzteilfunktion (negativ) in Web
+  - `Netzteil_minus.py`: Netzteilfunktion (negativ)
+  - `Netzteil_plus_web.py`: Netzteilfunktion (positiv) in Web
+  - `Netzteil_plus.py`: Netzteilfunktion (positiv)
   - `Oszilloskop_web.py`: Oszilloskop in Web
 - `.gitignore`: Bei commit ignorieren
 - `LICENSE`: MIT License
