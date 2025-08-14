@@ -18,7 +18,7 @@ from daqhats_utils import select_hat_device, chan_list_to_mask
 # ----------------- Konstanten -----------------
 SHUNT_WIDERSTAND = 0.1      # Ohm
 VERSTAERKUNG = 69.0         # Verstärkungsfaktor Stromverstärker
-CS_PIN = 22                 # Chip Select Pin
+CS_PIN = 27                 # Chip Select Pin
 READ_ALL_AVAILABLE = -1
 
 MAX_SPANNUNG_NEGATIV = -10  # minimaler Wert (negativ)

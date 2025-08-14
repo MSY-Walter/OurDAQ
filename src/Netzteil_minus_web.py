@@ -15,7 +15,7 @@ from daqhats import mcc118, HatIDs
 from daqhats_utils import select_hat_device
 
 # ----------------- Konstanten -----------------
-CS_PIN = 22                 # Chip Select Pin
+CS_PIN = 27                 # Chip Select Pin
 MAX_SPANNUNG_NEGATIV = -10  # minimaler Wert (negativ)
 
 # ----------------- Hardware initialisieren (einmalig beim Start) -----------------
