@@ -3,7 +3,7 @@
 Steuerprogramm für Labornetzteil – Negative Spannung
 - Automatische Kalibrierung (MCC118 Channel 0)
 - Lineare Interpolation der Kalibrierpunkte
-- Dauerhafte Stromüberwachung (MCC118 Channel 4) in mA
+- Dauerhafte Stromüberwachung (MCC118 Channel 5) in mA
 - Lineare Kalibrierkorrektur für MCC-Strommessung (Offset + Gain)
 - Überstromschutz: bei > MAX_STROM_MA wird DAC sofort auf 0 gesetzt
 """
@@ -31,7 +31,6 @@ kalibrier_tabelle = []  # Liste von (spannung_in_v, dac_wert)
 # Anfangswerte (analog zum positiven Beispiel, anpassen falls nötig)
 corr_a = -0.279388
 corr_b = 1.782842
-
 
 # ----------------- Hardware initialisieren -----------------
 spi = spidev.SpiDev()
@@ -96,7 +95,6 @@ def kalibrieren(sp_step, settle):
     kalibrier_tabelle.sort(key=lambda x: x[0])
     print("Kalibrierung (Negative Spannung) abgeschlossen.")
     print(f"Gespeicherte Punkte: {len(kalibrier_tabelle)}")
-
 
 def spannung_zu_dac_interpoliert(ziel_spannung):
     """Lineare Interpolation zwischen Kalibrierpunkten -> DAC-Wert (int)."""
@@ -244,7 +242,6 @@ def main():
         print("\nProgramm durch Strg+C beendet.")
     finally:
         cleanup()
-
 
 if __name__ == "__main__":
     main()

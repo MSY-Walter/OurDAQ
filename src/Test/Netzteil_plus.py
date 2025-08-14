@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Steuerprogramm für Labornetzteil:
-- Kalibrierte Spannungs-Einstellung (MCC118 Channel 0)
+Steuerprogramm für Labornetzteil – Positive Spannung
+- Automatische Kalibrierung (MCC118 Channel 0)
 - Lineare Interpolation der Kalibrierpunkte
 - Dauerhafte Stromüberwachung (MCC118 Channel 4) in mA
 - Lineare Kalibrierkorrektur für MCC-Strommessung (Offset + Gain)
@@ -18,7 +18,7 @@ from daqhats_utils import select_hat_device, chan_list_to_mask
 # ----------------- Konstanten -----------------
 SHUNT_WIDERSTAND = 0.1      # Ohm
 VERSTAERKUNG = 69.0         # Verstärkungsfaktor Stromverstärker (falls du direkt mit Spannung rechnest)
-DAC_VREF = 10.75            # Referenzspannung DAC (V)
+DAC_VREF = 10            # Referenzspannung DAC (V)
 CS_PIN = 22                 # Chip Select Pin
 READ_ALL_AVAILABLE = -1
 
@@ -48,7 +48,6 @@ gpio_handle = lgpio.gpiochip_open(0)
 lgpio.gpio_claim_output(gpio_handle, CS_PIN)
 lgpio.gpio_write(gpio_handle, CS_PIN, 1)  # CS inaktiv (HIGH)
 
-
 # ----------------- DAC Funktionen -----------------
 def write_dac(value):
     """Schreibt 12-bit Wert 0..4095 an DAC (MCP49xx-kompatibel)."""
@@ -61,7 +60,6 @@ def write_dac(value):
     lgpio.gpio_write(gpio_handle, CS_PIN, 0)
     spi.xfer2([high_byte, low_byte])
     lgpio.gpio_write(gpio_handle, CS_PIN, 1)
-
 
 # ----------------- Kalibrierung (Spannungs-Mapping) -----------------
 def kalibrieren(sp_step, settle):
@@ -123,7 +121,6 @@ def spannung_zu_dac_interpoliert(ziel_spannung):
             return int(round(dac))
     raise ValueError("Interpolation fehlgeschlagen.")
 
-
 # ----------------- Stromkorrektur Hilfsfunktionen -----------------
 def kalibriere_stromkorrektur(mcc_list_mA, true_list_mA):
     """
@@ -139,11 +136,9 @@ def kalibriere_stromkorrektur(mcc_list_mA, true_list_mA):
     a, b = np.linalg.lstsq(A, true, rcond=None)[0]
     return float(a), float(b)
 
-
 def apply_strom_korrektur(i_mcc_mA):
     """Wendet die lineare Korrektur auf einen MCC-Wert (mA) an."""
     return corr_a + corr_b * i_mcc_mA
-
 
 # ----------------- Stromüberwachung (kontinuierlich) -----------------
 def strom_ueberwachung(max_strom_ma=MAX_STROM_MA):
@@ -202,7 +197,6 @@ def strom_ueberwachung(max_strom_ma=MAX_STROM_MA):
         except Exception:
             pass
 
-
 # ----------------- Aufräumen -----------------
 def cleanup():
     print("\nAufräumen...")
@@ -216,7 +210,6 @@ def cleanup():
     except Exception:
         pass
     print("Beendet.")
-
 
 # ----------------- Hauptprogramm -----------------
 def main():
@@ -275,7 +268,6 @@ def main():
         print("\nProgramm durch Strg+C beendet.")
     finally:
         cleanup()
-
 
 if __name__ == "__main__":
     main()
