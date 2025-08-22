@@ -84,18 +84,10 @@ app.layout = html.Div([
         style={'textAlign': 'center', 'color': 'white', 'backgroundColor': '#2c3e50',
                'padding': '20px', 'margin': '0 0 20px 0', 'borderRadius': '8px'}
     ),
+    
+    # ### ANFANG DER ÄNDERUNG: Korrigierter Layout-Container ###
     html.Div([
-        html.Div(
-            id='rightContent',
-            children=[
-                dcc.Graph(id='stripChart'),
-                html.Div(id='errorDisplay',
-                         children='',
-                         style={'font-weight': 'bold', 'color': 'red'})
-            ], 
-            style={'width': '100%', 'box-sizing': 'border-box',
-                   'float': 'left', 'padding-left': 320}
-        ),
+        # Linke Spalte für die Steuerungselemente
         html.Div(
             id='leftContent',
             children=[
@@ -106,7 +98,7 @@ app.layout = html.Div([
                                   'margin-top': 10}),
                 dcc.Input(id='sampleRateInput', type='number', min=1,
                           max=MCC118_MAX_SAMPLE_RATE, step=1, value=1000,
-                          style={'width': 150, 'display': 'block', 'margin-bottom': 5}),
+                          style={'width': '100%', 'box-sizing': 'border-box', 'display': 'block', 'margin-bottom': 5}),
                 html.Div(id='sampleRateStatus', 
                         style={'font-size': '12px', 'color': '#666',
                                'margin-bottom': 10}),
@@ -115,7 +107,7 @@ app.layout = html.Div([
                                   'display': 'block', 'margin-top': 10}),
                 dcc.Input(id='samplesToDisplay', type='number', min=1,
                           max=10000, step=1, value=1000,
-                          style={'width': 100, 'display': 'block'}),
+                          style={'width': '100%', 'box-sizing': 'border-box', 'display': 'block'}),
                 html.Label('Aktive Kanäle',
                            style={'font-weight': 'bold', 'display': 'block',
                                   'margin-top': 10}),
@@ -130,15 +122,38 @@ app.layout = html.Div([
                 html.Button(
                     children='Konfigurieren',
                     id='startStopButton',
-                    style={'width': 100, 'height': 35, 'text-align': 'center',
-                           'margin-top': 10}
+                    style={'width': '100%', 'height': 35, 'text-align': 'center',
+                           'margin-top': 20}
                 ),
-            ], 
-            style={'width': 320, 'box-sizing': 'border-box', 'padding': 10,
-                   'position': 'absolute', 'top': 0, 'left': 0}
+            ],
+            # Korrigierter Stil: float statt absolute Positionierung
+            style={
+                'width': '320px', 
+                'float': 'left', 
+                'padding': '10px', 
+                'box-sizing': 'border-box',
+                'background-color': '#f8f9fa',
+                'border-right': '1px solid #ccc'
+            }
         ),
-    ], 
-    style={'position': 'relative', 'display': 'block', 'overflow': 'hidden'}),
+        # Rechte Spalte für den Graphen
+        html.Div(
+            id='rightContent',
+            children=[
+                dcc.Graph(id='stripChart'),
+                html.Div(id='errorDisplay',
+                         children='',
+                         style={'font-weight': 'bold', 'color': 'red', 'padding': '10px'})
+            ], 
+            # Korrigierter Stil: margin-left schafft Platz für die linke Spalte
+            style={
+                'margin-left': '320px',
+                'padding': '10px'
+            }
+        ),
+    ]),
+    # ### ENDE DER ÄNDERUNG ###
+
     dcc.Interval(
         id='timer',
         interval=1000*60*60*24,
