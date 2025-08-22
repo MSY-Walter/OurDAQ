@@ -39,11 +39,11 @@ class SystemConfig:
 
 # --- MODUL-DEFINITIONEN ---
 MODULES = {
-    'dmm': ModuleConfig('Digitalmultimeter', 'DMM_web.py', 8050, '#3498db'),
-    'funktionsgenerator': ModuleConfig('Funktionsgenerator', 'Funktionsgenerator_web.py', 8060, '#e74c3c'),
-    'oszilloskop': ModuleConfig('Oszilloskop', 'Oszilloskop_web.py', 8080, '#27ae60'),
-    'netzteil_plus': ModuleConfig('Netzteil positiv', 'Netzteil_plus_web.py', 8071, '#f39c12'),
-    'netzteil_minus': ModuleConfig('Netzteil negativ', 'Netzteil_minus_web.py', 8072, '#f39c12'),
+    'dmm': ModuleConfig('Digitalmultimeter', 'src/DMM_web.py', 8050, '#3498db'),
+    'funktionsgenerator': ModuleConfig('Funktionsgenerator', 'src/Funktionsgenerator_web.py', 8060, '#e74c3c'),
+    'oszilloskop': ModuleConfig('Oszilloskop', 'src/Oszilloskop_web.py', 8080, '#27ae60'),
+    'netzteil_plus': ModuleConfig('Netzteil positiv', 'src/Netzteil_plus_web.py', 8071, '#f39c12'),
+    'netzteil_minus': ModuleConfig('Netzteil negativ', 'src/Netzteil_minus_web.py', 8072, '#f39c12'),
 }
 
 CONFIG = SystemConfig()

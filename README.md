@@ -81,13 +81,6 @@ Das System bietet folgende Standard-Messroutinen:
 
 ## Verwendung
 
-Hauptmenü für alle Funktionalitäten in Web öffnen:
-
-```bash
-cd ~/OurDAQ
-uv run src/Dashboard_web.py
-```
-
 Bestimmte Funktionalität öffnen:
 
 ```bash
@@ -106,17 +99,17 @@ uv run jupyter lab --ip=0.0.0.0 --port=8888
 
 - `docs/`: Dokumentation
 - `Test/`: Programme zu testen (noch in Bearbeitung)
+  - `Dashboard_web.py`: Hauptmenü für alle Funktionalitäten in Web
   - `Filterkennlinie.ipynb`: Jupyter Notebook für Filterkennlinie
   - `Funktionsgenerator_optimiert.py`: Erzeugung der Signale mit AD9833 (optimiert)
-  - `Funktionsgenerator_web.py`: Erzeugung der Signale mit AD9833 in web
   - `Strommessung.py`: Strommessung von DMM
 - `src/`: Quellcode-Verzeichnis
   - `daqhats_utils.py`: Bibliothek für Netzteil-Funktionalität
-  - `Dashboard_web.py`: Hauptmenü für alle Funktionalitäten in Web
   - `Diodenkennlinie.ipynb`: Jupyter Notebook für Diodenkennlinie
   - `Diodenkennlinie.py`: Diodenkennlinie darstellen
   - `DMM_web.py`: Digitalmultimeter in Web
   - `Filterkennlinie.py`: Filterkennlinie darstellen
+  - `Funktionsgenerator_web.py`: Erzeugung der Signale mit AD9833 in web
   - `Funktionsgenerator.py`: Erzeugung der Signale mit AD9833
   - `Netzteil_minus_web.py`: Netzteilfunktion (negativ) in Web
   - `Netzteil_minus.py`: Netzteilfunktion (negativ)
