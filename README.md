@@ -28,7 +28,7 @@ Das System bietet folgende Standard-Messroutinen:
 - `python>=3.11`
 - Und Folgende Python-Pakete:
   - `daqhats>=1.4.1.0`
-  - `dash>=3.0.4`
+  - `dash>=3.2.0`
   - `lgpio>=0.2.2.0`
   - `matplotlib>=3.10.3`
   - `notebook>=7.4.2`
@@ -130,3 +130,4 @@ uv run jupyter lab --ip=0.0.0.0 --port=8888
 ## Lizenz
 
 Dieses Projekt steht unter [`MIT License`](LICENSE)
+
