@@ -179,9 +179,6 @@ def activate_waveform(waveform):
 def configure_AD9833(freq_hz, waveform):
     """
     Komplette Konfiguration des AD9833 mit korrekter Sequenz
-    
-    Diese Funktion implementiert die exakte Sequenz aus der
-    funktionierenden Filterkennlinie.ipynb
     """
     print(f"Starte AD9833 Konfiguration...")
     print(f"Zielfrequenz: {freq_hz} Hz")
