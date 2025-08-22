@@ -13,9 +13,9 @@ PHASE0_REG = 0xC000
 CONTROL_REG = 0x2000
 
 # Wellenform-Konstanten
-SINE_WAVE = 0x2000      # Sinuswelle
-TRIANGLE_WAVE = 0x2002  # Dreieckswelle
-SQUARE_WAVE = 0x2028    # Rechteckwelle
+SINE_WAVE = 0x0000      # Sinuswelle (RESET=0, B28=0, Wellenform-Bits = 00)
+TRIANGLE_WAVE = 0x0002  # Dreieckswelle (RESET=0, B28=0, MODE=1)
+SQUARE_WAVE = 0x0028    # Rechteckwelle (RESET=0, B28=0, OPBITEN=1, DIV2=1)
 
 # Reset-Konstante (kritisch für korrekte Funktion!)
 RESET = 0x2100          # Reset-Befehl wie in Filterkennlinie.ipynb
@@ -27,9 +27,7 @@ SPI_FREQUENCY = 1000000  # 1 MHz
 
 # FSYNC Pin (Chip Select)
 FSYNC_PIN = 25  # GPIO-Pin für FSYNC
-
-# PIN24 für Wellenform-Kontrolle
-WAVEFORM_CONTROL_PIN = 24  # GPIO-Pin für zusätzliche Wellenform-Kontrolle
+WAVEFORM_SELECT_PIN = 24 # NEU: GPIO-Pin zur Signalisierung der Rechteckwelle
 
 # Frequenz-Konstanten
 FMCLK = 25000000  # 25 MHz Standardtaktfrequenz
@@ -55,10 +53,10 @@ def init_AD9833():
         lgpio.gpio_claim_output(gpio_handle, FSYNC_PIN, lgpio.SET)  
         print(f"GPIO Pin {FSYNC_PIN} konfiguriert")
 
-        print(f"Konfiguriere GPIO Pin {WAVEFORM_CONTROL_PIN} als Ausgang...")
-        # PIN24 für Wellenform-Kontrolle als Ausgang konfigurieren (initial LOW)
-        lgpio.gpio_claim_output(gpio_handle, WAVEFORM_CONTROL_PIN, lgpio.CLEAR)  
-        print(f"GPIO Pin {WAVEFORM_CONTROL_PIN} für Wellenform-Kontrolle konfiguriert")
+        # NEU: Pin 24 als Ausgang für die Rechteck-Signalisierung konfigurieren (initial LOW)
+        print(f"Konfiguriere GPIO Pin {WAVEFORM_SELECT_PIN} als Ausgang...")
+        lgpio.gpio_claim_output(gpio_handle, WAVEFORM_SELECT_PIN, lgpio.CLEAR)
+        print(f"GPIO Pin {WAVEFORM_SELECT_PIN} konfiguriert")
 
         print("Initialisiere SPI...")
         # SPI initialisieren
@@ -85,39 +83,6 @@ def init_AD9833():
         print(f"Fehler bei der Initialisierung: {e}")
         print(f"Details: {type(e).__name__}")
         cleanup_AD9833()
-        return False
-
-def set_waveform_control_pin(waveform):
-    """
-    Steuert PIN24 basierend auf der gewählten Wellenform
-    
-    Parameter:
-    waveform: Wellenform-Konstante (SINE_WAVE, TRIANGLE_WAVE, SQUARE_WAVE)
-    
-    Logik:
-    - Rechteckwelle (SQUARE_WAVE): PIN24 = HIGH
-    - Sinus oder Dreieckswelle: PIN24 = LOW
-    """
-    global gpio_handle
-    
-    if gpio_handle is None:
-        print("GPIO nicht initialisiert")
-        return False
-    
-    try:
-        if waveform == SQUARE_WAVE:
-            # Rechteckwelle: PIN24 auf HIGH setzen
-            lgpio.gpio_write(gpio_handle, WAVEFORM_CONTROL_PIN, lgpio.SET)
-            print(f"PIN{WAVEFORM_CONTROL_PIN} auf HIGH gesetzt (Rechteckwelle)")
-        else:
-            # Sinus oder Dreieckswelle: PIN24 auf LOW setzen
-            lgpio.gpio_write(gpio_handle, WAVEFORM_CONTROL_PIN, lgpio.CLEAR)
-            print(f"PIN{WAVEFORM_CONTROL_PIN} auf LOW gesetzt (Sinus/Dreieckswelle)")
-        
-        return True
-        
-    except Exception as e:
-        print(f"Fehler beim Setzen von PIN{WAVEFORM_CONTROL_PIN}: {e}")
         return False
 
 def write_to_AD9833(data):
@@ -193,7 +158,7 @@ def set_ad9833_frequency(freq_hz):
 
 def activate_waveform(waveform):
     """
-    Aktiviert die gewählte Wellenform und steuert PIN24
+    Aktiviert die gewählte Wellenform
     
     WICHTIG: Dies muss NACH der Frequenzeinstellung erfolgen!
     Die Wellenform-Aktivierung beendet den Reset-Zustand.
@@ -205,10 +170,6 @@ def activate_waveform(waveform):
     }
     
     try:
-        # PIN24 entsprechend der Wellenform setzen
-        if not set_waveform_control_pin(waveform):
-            print("Warnung: PIN24 konnte nicht gesetzt werden")
-        
         # Wellenform aktivieren (beendet gleichzeitig Reset-Zustand)
         if not write_to_AD9833(waveform):
             return False
@@ -224,11 +185,8 @@ def activate_waveform(waveform):
 def configure_AD9833(freq_hz, waveform):
     """
     Komplette Konfiguration des AD9833 mit korrekter Sequenz
-    
-    Diese Funktion implementiert die exakte Sequenz aus der
-    funktionierenden Filterkennlinie.ipynb
     """
-    print(f"Starte AD9833 Konfiguration...")
+    print(f"\nStarte AD9833 Konfiguration...")
     print(f"Zielfrequenz: {freq_hz} Hz")
     
     try:
@@ -238,10 +196,22 @@ def configure_AD9833(freq_hz, waveform):
             print("Frequenz-Einstellung fehlgeschlagen")
             return False
         
-        # Schritt 2: Wellenform aktivieren (beendet Reset, startet Ausgabe, steuert PIN24)
-        print("Aktiviere Wellenform und setze PIN24...")
+        # Schritt 2: Wellenform aktivieren (beendet Reset, startet Ausgabe)
+        print("Aktiviere Wellenform...")
         if not activate_waveform(waveform):
             print("Wellenform-Aktivierung fehlgeschlagen")
+            return False
+        
+        # NEU: PIN 24 basierend auf der ausgewählten Wellenform setzen
+        try:
+            if waveform == SQUARE_WAVE:
+                print(f"Setze PIN {WAVEFORM_SELECT_PIN} auf HIGH für Rechteckwelle")
+                lgpio.gpio_write(gpio_handle, WAVEFORM_SELECT_PIN, lgpio.SET)
+            else:
+                print(f"Setze PIN {WAVEFORM_SELECT_PIN} auf LOW für Sinus/Dreieck")
+                lgpio.gpio_write(gpio_handle, WAVEFORM_SELECT_PIN, lgpio.CLEAR)
+        except Exception as e:
+            print(f"Fehler beim Setzen von PIN {WAVEFORM_SELECT_PIN}: {e}")
             return False
         
         print(f"AD9833 Konfiguration abgeschlossen")
@@ -260,12 +230,14 @@ def cleanup_AD9833():
         if gpio_handle is not None and spi is not None:
             print("Setze AD9833 zurück...")
             write_to_AD9833(RESET)
+            # NEU: Pin 24 auf LOW setzen beim Aufräumen
+            lgpio.gpio_write(gpio_handle, WAVEFORM_SELECT_PIN, lgpio.CLEAR)
             time.sleep(0.1)
         
         # GPIO freigeben
         if gpio_handle is not None:
             lgpio.gpio_free(gpio_handle, FSYNC_PIN)
-            lgpio.gpio_free(gpio_handle, WAVEFORM_CONTROL_PIN)  # PIN24 auch freigeben
+            lgpio.gpio_free(gpio_handle, WAVEFORM_SELECT_PIN) # NEU
             lgpio.gpiochip_close(gpio_handle)
             gpio_handle = None
             print("GPIO Ressourcen freigegeben")
@@ -351,12 +323,6 @@ def main():
         print(f"\nSchritt 3: AD9833 konfigurieren")
         print(f"Frequenz: {freq} Hz")
         print(f"Wellenform: {waveform_name}")
-        
-        # PIN24 Status anzeigen
-        if waveform_code == SQUARE_WAVE:
-            print(f"PIN{WAVEFORM_CONTROL_PIN} wird auf HIGH gesetzt (Rechteckwelle)")
-        else:
-            print(f"PIN{WAVEFORM_CONTROL_PIN} wird auf LOW gesetzt (Sinus/Dreieckswelle)")
 
         config_success = configure_AD9833(freq, waveform_code)
         
@@ -364,8 +330,6 @@ def main():
             print(f"\nFUNKTIONSGENERATOR ERFOLGREICH KONFIGURIERT:")
             print(f"Frequenz: {freq} Hz")
             print(f"Wellenform: {waveform_name}")
-            pin_status = "HIGH" if waveform_code == SQUARE_WAVE else "LOW"
-            print(f"PIN{WAVEFORM_CONTROL_PIN} Status: {pin_status}")
             print(f"Signal wird ausgegeben!")
             print(f"\nFür neue Einstellungen starten Sie das Programm erneut.")
         else:
@@ -377,8 +341,16 @@ def main():
                 
     except KeyboardInterrupt:
         print("\n\nProgramm durch Benutzer abgebrochen.")
+        
+    except Exception as e:
+        print(f"\nUnerwarteter Fehler: {e}")
+        input("Drücken Sie Enter zum Beenden...")
+        
     finally:
+        # Aufräumen
+        print("\nRäume Ressourcen auf...")
         cleanup_AD9833()
+        print("Programm beendet.")
 
 if __name__ == "__main__":
     main()
