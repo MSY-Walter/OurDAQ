@@ -102,7 +102,6 @@ uv run jupyter lab --ip=0.0.0.0 --port=8888
   - `Dashboard_web.py`: Hauptmenü für alle Funktionalitäten in Web
   - `Filterkennlinie.ipynb`: Jupyter Notebook für Filterkennlinie
   - `Funktionsgenerator_optimiert.py`: Erzeugung der Signale mit AD9833 (optimiert)
-  - `Strommessung.py`: Strommessung von DMM
 - `src/`: Quellcode-Verzeichnis
   - `daqhats_utils.py`: Bibliothek für Netzteil-Funktionalität
   - `Diodenkennlinie.ipynb`: Jupyter Notebook für Diodenkennlinie
