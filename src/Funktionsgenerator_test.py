@@ -5,175 +5,129 @@ Funktionsgenerator mit AD9833
 
 import lgpio
 import time
-import math
 
-# Pin-Definitionen basierend auf der GPIO-Nummerierung (BCM)
-# Raspberry Pi 5 verwendet SPI0 für diese Pins
-SPI_BUS = 0
-SPI_DEVICE = 0
-SPI_SPEED = 2000000  # 2 MHz, sicher für den AD9833
-FCN_PIN = 25         # Frame Sync Pin, wie gewünscht
+# Konfiguration der GPIO-Pins (BCM-Nummerierung)
+# FNC/FSYNC-Pin des AD9833
+FNC_PIN = 25
 
-# AD9833 Konstanten
-# Master Clock Frequenz des Oszillators auf dem AD9833-Modul (meist 25 MHz)
-MCLK = 25000000.0
+# SPI-Konfiguration
+SPI_DEVICE = 0  # SPI-Bus 0
+SPI_CHANNEL = 0 # Chip Select 0
+SPI_SPEED = 1000000  # 1 MHz
+SPI_FLAGS = 0
 
-# AD9833 Register und Befehle (16-Bit Kontrollwörter)
-# Kontrollregister-Bits
-B28_BIT = 1 << 13
-RESET_CMD = 1 << 8
+# AD9833 Register und Befehle
+CONTROL_REG = 0x2000
+FREQ0_REG = 0x4000
+PHASE0_REG = 0xC000
 
-# Wellenform-Modi (werden zum Kontrollregister addiert)
+# Wellenform-Definitionen
 SINE_WAVE = 0x2000
 TRIANGLE_WAVE = 0x2002
 SQUARE_WAVE = 0x2028
-SQUARE_DIV2_WAVE = 0x2020 # Rechteck mit 50% Tastverhältnis (F_OUT = F_MCLK/2)
 
-# Frequenz- und Phasenregister-Adressen
-FREQ0_REG = 0x4000
-FREQ1_REG = 0x8000
-PHASE0_REG = 0xC000
-PHASE1_REG = 0xE000
+# Taktfrequenz des Oszillators auf dem AD9833-Modul
+MASTER_CLOCK_FREQ = 25000000.0  # 25 MHz
 
-class AD9833:
-    """
-    Eine Klasse zur Ansteuerung des AD9833 DDS Signalgenerators
-    über SPI mit der lgpio-Bibliothek auf einem Raspberry Pi.
-    """
-    def __init__(self, fcn_pin, spi_bus, spi_device, spi_speed, mclk):
-        """
-        Initialisiert die SPI- und GPIO-Verbindung.
-        """
-        self.mclk = mclk
-        self.fcn_pin = fcn_pin
+def write_data(handle, fnc_handle, data):
+    """Sendet ein 16-Bit-Wort an den AD9833."""
+    # FSYNC auf LOW setzen, um die Übertragung zu starten
+    lgpio.gpio_write(fnc_handle, FNC_PIN, 0)
+    time.sleep(0.00001)
 
-        # GPIO Chip öffnen (für Pi 5 ist das meist Chip 4, aber 0 ist ein Symlink)
-        self.gpio_h = lgpio.gpiochip_open(0)
-        
-        # SPI-Gerät öffnen
-        self.spi_h = lgpio.spi_open(spi_bus, spi_device, spi_speed, 0)
+    # Daten senden (High-Byte und Low-Byte)
+    tx_data = [(data >> 8) & 0xFF, data & 0xFF]
+    lgpio.spi_write(handle, tx_data)
 
-        # FCN-Pin als Ausgang konfigurieren
-        lgpio.gpio_claim_output(self.gpio_h, self.fcn_pin)
-        lgpio.gpio_write(self.gpio_h, self.fcn_pin, 1) # FCN Pin auf HIGH setzen (inaktiv)
+    # FSYNC auf HIGH setzen, um die Übertragung zu beenden
+    lgpio.gpio_write(fnc_handle, FNC_PIN, 1)
+    time.sleep(0.00001)
 
-        print("AD9833-Treiber initialisiert.")
-        self.reset()
+def set_frequency(handle, fnc_handle, frequency):
+    """Berechnet und setzt die Frequenz des AD9833."""
+    if frequency > MASTER_CLOCK_FREQ / 2:
+        frequency = MASTER_CLOCK_FREQ / 2
+    if frequency < 0:
+        frequency = 0
 
-    def write_register(self, data):
-        """
-        Schreibt einen 16-Bit-Wert in ein Register des AD9833.
-        """
-        # Daten in zwei Bytes aufteilen (High Byte, Low Byte)
-        high_byte = (data >> 8) & 0xFF
-        low_byte = data & 0xFF
-        tx_data = bytes([high_byte, low_byte])
+    # Frequenzwort berechnen
+    freq_word = int(round((frequency * (2**28)) / MASTER_CLOCK_FREQ))
 
-        # Kommunikationssequenz: FCN LOW -> Daten senden -> FCN HIGH
-        lgpio.gpio_write(self.gpio_h, self.fcn_pin, 0)
-        time.sleep(1e-6) # Kurze Pause zur Stabilisierung
-        lgpio.spi_write(self.spi_h, tx_data)
-        time.sleep(1e-6)
-        lgpio.gpio_write(self.gpio_h, self.fcn_pin, 1)
+    # Frequenzwort in zwei 14-Bit-Teile aufteilen
+    msb = (freq_word >> 14) & 0x3FFF
+    lsb = freq_word & 0x3FFF
 
-    def reset(self):
-        """
-        Setzt den AD9833 zurück und initialisiert ihn.
-        """
-        # Reset-Bit setzen, um den internen Zustand zurückzusetzen
-        self.write_register(RESET_CMD)
-        time.sleep(0.01) # Kurze Wartezeit nach dem Reset
-        
-        # Setzt die Frequenz auf 0 Hz und wählt Sinuswelle als Standard
-        self.set_frequency(0)
-        self.set_waveform(SINE_WAVE)
+    # Kontrollregister schreiben (B28 = 1, um Frequenzregister zu aktualisieren)
+    write_data(handle, fnc_handle, CONTROL_REG | 0x2000)
 
-    def set_frequency(self, frequency, register=0):
-        """
-        Stellt die Ausgangsfrequenz in Hz ein.
-        'register' kann 0 (FREQ0) oder 1 (FREQ1) sein.
-        """
-        if frequency > self.mclk / 2:
-            print(f"Warnung: Frequenz {frequency} Hz ist zu hoch. Maximum ist {self.mclk / 2} Hz.")
-            frequency = self.mclk / 2
-        if frequency < 0:
-            frequency = 0
-            
-        # Berechnet das 28-Bit Frequenz-Wort
-        # freq_word = int(round((frequency * (2**28)) / self.mclk))
-        freq_word = int(round(frequency * (2**28 / self.mclk)))
+    # LSB und MSB des Frequenzregisters schreiben
+    write_data(handle, fnc_handle, lsb | FREQ0_REG)
+    write_data(handle, fnc_handle, msb | FREQ0_REG)
 
-        # Teilt das 28-Bit-Wort in zwei 14-Bit-Wörter (MSB und LSB)
-        msb = (freq_word >> 14) & 0x3FFF
-        lsb = freq_word & 0x3FFF
+def set_waveform(handle, fnc_handle, waveform):
+    """Setzt die Wellenform des AD9833."""
+    write_data(handle, fnc_handle, waveform)
 
-        # Wählt das Ziel-Register (FREQ0 oder FREQ1)
-        reg_addr = FREQ0_REG if register == 0 else FREQ1_REG
-
-        # Schreibt die Werte in die Register
-        # Wichtig: B28-Bit setzen, damit beide Bytes (LSB & MSB) auf einmal geladen werden
-        control_word = B28_BIT 
-        self.write_register(control_word)
-        self.write_register(lsb | reg_addr)
-        self.write_register(msb | reg_addr)
-        
-    def set_waveform(self, waveform):
-        """
-        Wählt die Wellenform aus.
-        Benutzt die Konstanten: SINE_WAVE, TRIANGLE_WAVE, SQUARE_WAVE
-        """
-        self.write_register(waveform)
-
-    def close(self):
-        """
-        Gibt die GPIO- und SPI-Ressourcen sauber frei.
-        """
-        print("Ressourcen werden freigegeben.")
-        lgpio.spi_close(self.spi_h)
-        lgpio.gpiochip_close(self.gpio_h)
-
-# --- Hauptprogramm ---
-if __name__ == "__main__":
-    
-    ad9833 = None # Deklarieren, damit es im finally-Block verfügbar ist
-    
+def main():
+    """Hauptprogramm zur Abfrage und Konfiguration des AD9833."""
+    h = None
+    fnc_handle = None
     try:
-        # Initialisiert den AD9833-Generator
-        ad9833 = AD9833(
-            fcn_pin=FCN_PIN,
-            spi_bus=SPI_BUS,
-            spi_device=SPI_DEVICE,
-            spi_speed=SPI_SPEED,
-            mclk=MCLK
-        )
-        
-        # Stellt eine Testfrequenz ein
-        test_frequenz = 1000  # 1 kHz
-        print(f"Setze Frequenz auf {test_frequenz} Hz.")
-        ad9833.set_frequency(test_frequenz)
-        
-        print("\nWechsle alle 5 Sekunden die Wellenform. Drücke STRG+C zum Beenden.")
-        
-        # Endlosschleife zum Wechseln der Wellenformen
-        while True:
-            print("-> Erzeuge Sinuswelle...")
-            ad9833.set_waveform(SINE_WAVE)
-            time.sleep(5)
-            
-            print("-> Erzeuge Dreieckwelle...")
-            ad9833.set_waveform(TRIANGLE_WAVE)
-            time.sleep(5)
-            
-            print("-> Erzeuge Rechteckwelle...")
-            ad9833.set_waveform(SQUARE_WAVE)
-            time.sleep(5)
+        # GPIO-Chip für FNC-Pin öffnen
+        fnc_handle = lgpio.gpiochip_open(0)
+        # FNC-Pin als Ausgang konfigurieren und auf HIGH setzen
+        lgpio.gpio_claim_output(fnc_handle, FNC_PIN)
+        lgpio.gpio_write(fnc_handle, FNC_PIN, 1)
 
-    except KeyboardInterrupt:
-        print("\nProgramm durch Benutzer beendet.")
+        # SPI-Gerät öffnen
+        h = lgpio.spi_open(SPI_DEVICE, SPI_CHANNEL, SPI_SPEED, SPI_FLAGS)
+
+        # AD9833 initialisieren (Reset)
+        write_data(h, fnc_handle, 0x2100)
+        time.sleep(0.01)
+
+        while True:
+            # Benutzereingabe für die Wellenform
+            print("\nBitte wählen Sie eine Wellenform:")
+            print("1: Sinuswelle")
+            print("2: Dreieckswelle")
+            print("3: Rechteckwelle")
+            wahl = input("Ihre Wahl (1-3): ")
+
+            waveform = 0
+            if wahl == '1':
+                waveform = SINE_WAVE
+            elif wahl == '2':
+                waveform = TRIANGLE_WAVE
+            elif wahl == '3':
+                waveform = SQUARE_WAVE
+            else:
+                print("Ungültige Eingabe. Bitte versuchen Sie es erneut.")
+                continue
+
+            # Benutzereingabe für die Frequenz
+            try:
+                frequenz = float(input("Bitte geben Sie die Frequenz in Hz ein: "))
+            except ValueError:
+                print("Ungültige Frequenzeingabe. Bitte geben Sie eine Zahl ein.")
+                continue
+
+            # AD9833 konfigurieren
+            set_waveform(h, fnc_handle, waveform)
+            set_frequency(h, fnc_handle, frequenz)
+
+            print(f"AD9833 konfiguriert für eine Frequenz von {frequenz} Hz.")
+
+    except (KeyboardInterrupt, SystemExit):
+        print("\nProgramm wird beendet.")
     except Exception as e:
         print(f"Ein Fehler ist aufgetreten: {e}")
     finally:
-        if ad9833:
-            # Stellt die Frequenz auf 0, bevor das Programm endet
-            ad9833.set_frequency(0)
-            ad9833.close()
+        # Ressourcen freigeben
+        if h is not None:
+            lgpio.spi_close(h)
+        if fnc_handle is not None:
+            lgpio.gpiochip_close(fnc_handle)
+
+if __name__ == "__main__":
+    main()
