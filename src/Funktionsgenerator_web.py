@@ -233,7 +233,11 @@ app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'maxWidth': '800
         html.Label(f"Frequenz ({MIN_FREQUENCY} - {MAX_FREQUENCY} Hz):"),
         dcc.Input(
             id='frequency-input', type='number', min=MIN_FREQUENCY, max=MAX_FREQUENCY,
-            step=100, value=1000, style={'width': '100%', 'padding': '8px', 'marginBottom': '20px'}
+            # KORREKTUR: 'step' auf 1 geändert, um manuelle Eingabe beliebiger Ganzzahlen zu ermöglichen.
+            # 'step=100' führte dazu, dass Eingaben wie '1234' als ungültig (None) gewertet wurden.
+            # Für Fließkommazahlen (z.B. 123.45) könnte man auch 'step="any"' verwenden.
+            step=1, 
+            value=1000, style={'width': '100%', 'padding': '8px', 'marginBottom': '20px'}
         ),
         
         html.Label("Wellenform:"),

@@ -13,9 +13,9 @@ PHASE0_REG = 0xC000
 CONTROL_REG = 0x2000
 
 # Wellenform-Konstanten
-SINE_WAVE = CONTROL_REG | 0x0000      # Sinuswelle im 28-Bit Modus
-TRIANGLE_WAVE = CONTROL_REG | 0x0002  # Dreieckswelle im 28-Bit Modus
-SQUARE_WAVE = CONTROL_REG | 0x0028    # Rechteckwelle im 28-Bit Modus
+SINE_WAVE = 0x0000      # Sinuswelle (RESET=0, B28=0, Wellenform-Bits = 00)
+TRIANGLE_WAVE = 0x0002  # Dreieckswelle (RESET=0, B28=0, MODE=1)
+SQUARE_WAVE = 0x0028    # Rechteckwelle (RESET=0, B28=0, OPBITEN=1, DIV2=1)
 
 # Reset-Konstante (kritisch für korrekte Funktion!)
 RESET = 0x2100          # Reset-Befehl wie in Filterkennlinie.ipynb
