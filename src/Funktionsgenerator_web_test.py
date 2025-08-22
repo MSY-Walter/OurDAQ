@@ -232,8 +232,12 @@ app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'maxWidth': '800
         html.H3("Einstellungen"),
         html.Label(f"Frequenz ({MIN_FREQUENCY} - {MAX_FREQUENCY} Hz):"),
         dcc.Input(
-            id='frequency-input', type='number', min=MIN_FREQUENCY, max=MAX_FREQUENCY,
-            step=100, value=1000, style={'width': '100%', 'padding': '8px', 'marginBottom': '20px'}
+            id='frequency-input', 
+            type='text',  # GEÄNDERT: von 'number' zu 'text'
+            inputMode='numeric', # Fügt eine numerische Tastatur auf Mobilgeräten hinzu
+            pattern='[0-9]*\.?[0-9]+', # Optional: HTML5-Validierung für Zahlen
+            value='1000', # Startwert bleibt als String
+            style={'width': '100%', 'padding': '8px', 'marginBottom': '20px'}
         ),
         
         html.Label("Wellenform:"),
@@ -267,7 +271,7 @@ app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'maxWidth': '800
     State('waveform-selector', 'value'),
     prevent_initial_call=True
 )
-def handle_button_actions(activate_clicks, reset_clicks, frequency, waveform):
+def handle_button_actions(activate_clicks, reset_clicks, frequency_str, waveform): # GEÄNDERT: frequency zu frequency_str
     """Behandelt Button-Aktionen und aktualisiert den Status"""
     global current_status
     from dash import callback_context
@@ -275,12 +279,21 @@ def handle_button_actions(activate_clicks, reset_clicks, frequency, waveform):
     button_id = callback_context.triggered[0]['prop_id'].split('.')[0]
     
     if button_id == 'activate-button':
-        if frequency is None:
-            current_status = "Bitte eine gültige Frequenz eingeben."
+        # GEÄNDERT: Validierungslogik
+        try:
+            # Versuche, den String in eine Gleitkommazahl umzuwandeln
+            frequency = float(frequency_str)
+        except (ValueError, TypeError):
+            # Schlägt fehl, wenn der String leer ist oder keine Zahl darstellt
+            current_status = "Ungültige Frequenzeingabe. Bitte geben Sie eine Zahl ein."
             return html.Span(current_status, style={'color': '#dc3545'})
         
         success = combined_init_and_configure(frequency, waveform)
         if success:
+            # Überprüfen, ob die Frequenz im gültigen Bereich lag
+            if not (MIN_FREQUENCY <= frequency <= MAX_FREQUENCY):
+                 return html.Span(current_status, style={'color': '#dc3545'}) # Zeigt die Fehlermeldung aus configure_AD9833
+            
             waveform_names = {SINE_WAVE: "Sinus", TRIANGLE_WAVE: "Dreieck", SQUARE_WAVE: "Rechteck"}
             waveform_name = waveform_names.get(waveform, "Unbekannt")
             status_msg = f"Aktiv: {frequency} Hz, {waveform_name}"
