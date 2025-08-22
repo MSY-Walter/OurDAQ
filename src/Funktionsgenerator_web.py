@@ -232,11 +232,11 @@ app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'maxWidth': '800
         html.H3("Einstellungen"),
         html.Label(f"Frequenz ({MIN_FREQUENCY} - {MAX_FREQUENCY} Hz):"),
         dcc.Input(
-            id='frequency-input', 
-            type='text',  # GEÄNDERT: von 'number' zu 'text'
-            inputMode='numeric', # Fügt eine numerische Tastatur auf Mobilgeräten hinzu
-            pattern='[0-9]*\.?[0-9]+', # Optional: HTML5-Validierung für Zahlen
-            value='1000', # Startwert bleibt als String
+            id='frequency-input',
+            type='text',
+            inputMode='numeric',
+            pattern='[0-9]*\.?[0-9]+',
+            value='1000',
             style={'width': '100%', 'padding': '8px', 'marginBottom': '20px'}
         ),
         
@@ -271,7 +271,7 @@ app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif', 'maxWidth': '800
     State('waveform-selector', 'value'),
     prevent_initial_call=True
 )
-def handle_button_actions(activate_clicks, reset_clicks, frequency_str, waveform): # GEÄNDERT: frequency zu frequency_str
+def handle_button_actions(activate_clicks, reset_clicks, frequency_str, waveform):
     """Behandelt Button-Aktionen und aktualisiert den Status"""
     global current_status
     from dash import callback_context
@@ -279,7 +279,6 @@ def handle_button_actions(activate_clicks, reset_clicks, frequency_str, waveform
     button_id = callback_context.triggered[0]['prop_id'].split('.')[0]
     
     if button_id == 'activate-button':
-        # GEÄNDERT: Validierungslogik
         try:
             # Versuche, den String in eine Gleitkommazahl umzuwandeln
             frequency = float(frequency_str)
