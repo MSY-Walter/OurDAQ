@@ -68,8 +68,9 @@ scan_options = OptionFlags.DEFAULT
 scan_order = sorted(channels)      # MCC118 scannt aufsteigend
 pos = {ch: scan_order.index(ch) for ch in channels}
 # Zeitversatz zwischen den beiden Kanälen (in Sekunden):
-delta_samples = pos[7] - pos[6]    # >0: Ausgang wird nach Eingang gesampelt
-dt = delta_samples / fs            # hier bei [6,7]: dt = 1/fs = 20 µs
+#delta_samples = pos[7] - pos[6]    # >0: Ausgang wird nach Eingang gesampelt
+#dt = delta_samples / fs            # hier bei [6,7]: dt = 1/fs = 20 µs
+dt = 0.000008                       # 8µs (aus Datenblatt)
 
 # --------- Result-Speicher ---------
 
