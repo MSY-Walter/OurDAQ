@@ -99,12 +99,15 @@ uv run jupyter lab --ip=0.0.0.0 --port=8888
 
 - `docs/`: Dokumentation
 - `Test/`: Programme zu testen (noch in Bearbeitung)
-  - `Dashboard_web.py`: Hauptmenü für alle Funktionalitäten in Web
+  - `Diodenkennlinie_test.py`: Diodenkennlinie darstellen (testen)
+  - `Diodenkennlinie.ipynb`: Jupyter Notebook für Diodenkennlinie
+  - `DMM_test.py`: Digitalmultimeter in Web (testen)
+  - `Filterkennlinie_test.py`: Filterkennlinie darstellen (testen)
   - `Filterkennlinie.ipynb`: Jupyter Notebook für Filterkennlinie
-  - `Funktionsgenerator_optimiert.py`: Erzeugung der Signale mit AD9833 (optimiert)
+  - `Funktionsgenerator_test.py`: Erzeugung der Signale mit AD9833 (optimiert)
 - `src/`: Quellcode-Verzeichnis
   - `daqhats_utils.py`: Bibliothek für Netzteil-Funktionalität
-  - `Diodenkennlinie.ipynb`: Jupyter Notebook für Diodenkennlinie
+  - `Dashboard_web.py`: Hauptmenü für alle Funktionalitäten in Web
   - `Diodenkennlinie.py`: Diodenkennlinie darstellen
   - `DMM_web.py`: Digitalmultimeter in Web
   - `Filterkennlinie.py`: Filterkennlinie darstellen
