@@ -39,13 +39,7 @@ Das System bietet folgende Standard-Messroutinen:
 
 ## Installation
 
-1. uv installieren (Falls nicht vorhanden):
-
-   ```bash
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   ```
-
-2. update und upgrade:
+1. update und upgrade:
 
    ```bash
    sudo apt update
@@ -53,17 +47,19 @@ Das System bietet folgende Standard-Messroutinen:
    sudo reboot
    ```
 
-3. Abhängigkeiten und Pakete von `Digilent MCC DAQ HAT MCC 118` installieren
+2. Abhängigkeiten und Pakete von `Digilent MCC DAQ HAT MCC 118` installieren
 
    ```bash
    cd ~
    git clone https://github.com/mccdaq/daqhats.git
+   ```
 
+   ```bash
    cd ~/daqhats
    sudo ./install.sh
    ```
 
-4. repository klonen:
+3. repository klonen:
 
    ```bash
    cd ~
@@ -72,7 +68,13 @@ Das System bietet folgende Standard-Messroutinen:
 
 ### Entwicklungsumgebung
 
-1. Abhängigkeiten und Pakete in der virtuellen Umgebung installieren:
+1. `uv` installieren (Falls nicht vorhanden):
+
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+
+2. Abhängigkeiten und Pakete in der virtuellen Umgebung installieren:
 
    ```bash
    cd ~/OurDAQ
@@ -84,28 +86,28 @@ Das System bietet folgende Standard-Messroutinen:
 Bestimmte Funktionalität öffnen:
 
 ```bash
-cd ~/OurDAQ
-uv run src/<Dateiname>
+cd ~/OurDAQ/src
+uv run <Dateiname>
 ```
 
 In Jupyter Lab (Jupyter Notebook) öffnen:
 
 ```bash
-cd ~/OurDAQ
+cd ~/OurDAQ/src
 uv run jupyter lab --ip=0.0.0.0 --port=8888
 ```
 
 ## Projektstruktur
 
 - `docs/`: Dokumentation
-- `Test/`: Programme zu testen (noch in Bearbeitung)
-  - `Diodenkennlinie_test.py`: Diodenkennlinie darstellen (testen)
-  - `Diodenkennlinie.ipynb`: Jupyter Notebook für Diodenkennlinie
-  - `DMM_test.py`: Digitalmultimeter in Web (testen)
-  - `Filterkennlinie_test.py`: Filterkennlinie darstellen (testen)
-  - `Filterkennlinie.ipynb`: Jupyter Notebook für Filterkennlinie
-  - `Funktionsgenerator_test.py`: Erzeugung der Signale mit AD9833 (optimiert)
 - `src/`: Quellcode-Verzeichnis
+  - `Test/`: Programme zu testen (noch in Bearbeitung)
+    - `Diodenkennlinie_test.py`: Diodenkennlinie darstellen (testen)
+    - `Diodenkennlinie.ipynb`: Jupyter Notebook für Diodenkennlinie
+    - `DMM_test.py`: Digitalmultimeter in Web (testen)
+    - `Filterkennlinie_test.py`: Filterkennlinie darstellen (testen)
+    - `Filterkennlinie.ipynb`: Jupyter Notebook für Filterkennlinie
+    - `Funktionsgenerator_test.py`: Erzeugung der Signale mit AD9833 (optimiert)
   - `daqhats_utils.py`: Bibliothek für Netzteil-Funktionalität
   - `Dashboard_web.py`: Hauptmenü für alle Funktionalitäten in Web
   - `Diodenkennlinie.py`: Diodenkennlinie darstellen
@@ -133,4 +135,3 @@ uv run jupyter lab --ip=0.0.0.0 --port=8888
 ## Lizenz
 
 Dieses Projekt steht unter [`MIT License`](LICENSE)
-
